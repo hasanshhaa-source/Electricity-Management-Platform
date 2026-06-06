@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge';
-import type { TenancyStatus, FlatStatus, BillStatus, TicketStatus } from '@/types';
+import type { TenancyStatus, FlatStatus, BillStatus, TicketStatus, CycleStatus } from '@/types';
 
 export function TenancyStatusBadge({ status }: { status: TenancyStatus }) {
   const variants: Record<TenancyStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'destructive' | 'warning' }> = {
@@ -32,6 +32,21 @@ export function BillStatusBadge({ status }: { status: BillStatus }) {
     waived:  { label: 'Waived',  variant: 'secondary' },
   };
   const { label, variant } = variants[status];
+  return <Badge variant={variant}>{label}</Badge>;
+}
+
+export function CycleStatusBadge({ status }: { status: CycleStatus }) {
+  const variants: Partial<Record<CycleStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'destructive' | 'warning' }>> = {
+    draft:               { label: 'Draft',               variant: 'secondary' },
+    readings_collected:  { label: 'Readings Collected',  variant: 'default' },
+    bills_imported:      { label: 'Bills Imported',      variant: 'warning' },
+    calculated:          { label: 'Calculated',          variant: 'warning' },
+    issued:              { label: 'Issued',              variant: 'success' },
+    closed:              { label: 'Closed',              variant: 'secondary' },
+    open:                { label: 'Open',                variant: 'default' },
+    finalized:           { label: 'Finalized',           variant: 'success' },
+  };
+  const { label, variant } = variants[status] ?? { label: status, variant: 'secondary' as const };
   return <Badge variant={variant}>{label}</Badge>;
 }
 

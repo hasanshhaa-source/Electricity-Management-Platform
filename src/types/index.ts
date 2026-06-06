@@ -5,7 +5,15 @@ export type FlatStatus = 'available' | 'occupied' | 'maintenance' | 'inactive';
 export type TenancyStatus = 'pending' | 'active' | 'ended' | 'rejected';
 export type MeterType = 'individual' | 'shared';
 export type ReadingType = 'actual' | 'estimated' | 'opening';
-export type CycleStatus = 'open' | 'calculated' | 'finalized' | 'closed';
+export type CycleStatus =
+  | 'draft'
+  | 'readings_collected'
+  | 'bills_imported'
+  | 'calculated'
+  | 'issued'
+  | 'closed'
+  | 'open'       // legacy
+  | 'finalized'; // legacy
 export type BillStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'waived';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'online' | 'other';
 export type NotificationChannel = 'email' | 'whatsapp' | 'in_app';
@@ -151,6 +159,7 @@ export interface TariffRate {
 export interface MeterReading {
   id: string;
   meter_id: string;
+  cycle_id: string | null;
   reading_value: number;
   reading_date: string;
   billing_period_year: number;
@@ -158,6 +167,7 @@ export interface MeterReading {
   reading_type: ReadingType;
   image_url: string | null;
   recorded_by: string;
+  override_reason: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
