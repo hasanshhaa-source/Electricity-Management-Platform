@@ -17,6 +17,7 @@ export function FlatStatusBadge({ status }: { status: FlatStatus }) {
     available:   { label: 'Available',   variant: 'success' },
     occupied:    { label: 'Occupied',    variant: 'default' },
     maintenance: { label: 'Maintenance', variant: 'warning' },
+    inactive:    { label: 'Inactive',    variant: 'secondary' },
   };
   const { label, variant } = variants[status];
   return <Badge variant={variant}>{label}</Badge>;

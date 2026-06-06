@@ -1,7 +1,7 @@
 // ─── Enums ────────────────────────────────────────────────────
 
 export type UserRole = 'admin' | 'tenant';
-export type FlatStatus = 'available' | 'occupied' | 'maintenance';
+export type FlatStatus = 'available' | 'occupied' | 'maintenance' | 'inactive';
 export type TenancyStatus = 'pending' | 'active' | 'ended' | 'rejected';
 export type MeterType = 'individual' | 'shared';
 export type ReadingType = 'actual' | 'estimated' | 'opening';
@@ -28,6 +28,7 @@ export interface User {
   email: string;
   full_name: string;
   phone: string | null;
+  national_id: string | null;
   role: UserRole;
   is_active: boolean;
   deleted_at: string | null;
@@ -57,11 +58,33 @@ export interface Flat {
   floor: number | null;
   area_sqm: number | null;
   description: string | null;
+  notes: string | null;
   status: FlatStatus;
   is_active: boolean;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ─── Extended / Joined Types ──────────────────────────────────
+
+export interface FlatWithTenant extends Flat {
+  building?: Building;
+  active_tenancy?: TenancyWithUser | null;
+}
+
+export interface TenancyWithUser extends Tenancy {
+  user: User;
+}
+
+export interface MeterWithAllocations extends Meter {
+  allocations: (FlatMeterAssignment & { flat: Pick<Flat, 'id' | 'flat_number' | 'floor'> })[];
+}
+
+export interface TenantWithTenancy extends User {
+  active_tenancy?: (Tenancy & {
+    flat: Flat & { building: Building };
+  }) | null;
 }
 
 export interface FlatWithBuilding extends Flat {
