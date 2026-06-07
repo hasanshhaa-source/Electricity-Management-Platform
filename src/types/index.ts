@@ -25,7 +25,7 @@ export type NotificationType =
   | 'tenancy_approved'
   | 'tenancy_rejected';
 export type NotificationStatus = 'pending' | 'sent' | 'failed' | 'skipped';
-export type TicketType = 'complaint' | 'recommendation' | 'query';
+export type TicketType = 'complaint' | 'recommendation' | 'query' | 'maintenance_request' | 'other';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 
 // ─── Database Entities ────────────────────────────────────────

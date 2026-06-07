@@ -22,9 +22,11 @@ async function getMyComplaints(submittedBy: string) {
 }
 
 const typeLabels: Record<string, string> = {
-  complaint: 'Complaint',
-  recommendation: 'Recommendation',
-  query: 'Query',
+  complaint:           'Complaint',
+  recommendation:      'Recommendation',
+  query:               'Query',
+  maintenance_request: 'Maintenance Request',
+  other:               'Other',
 };
 
 export default async function ComplaintsPage() {

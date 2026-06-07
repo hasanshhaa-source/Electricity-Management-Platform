@@ -316,6 +316,10 @@ export interface TenantBillWithPayments {
   status:               string;
   periodYear:           number;
   periodMonth:          number;
+  openingReading:       number | null;
+  closingReading:       number | null;
+  unitsConsumed:        number;
+  sharePercent:         number;
   billedUnits:          number;
   ratePerUnit:          number;
   currentCharges:       number;
@@ -347,6 +351,7 @@ export async function getTenantBillsWithPayments(
     .select(`
       id, status, total_due, amount_paid, outstanding_balance,
       current_charges, difference_adjustment, previous_balance,
+      opening_reading, closing_reading, units_consumed, share_percent,
       billed_units, rate_per_unit, due_date, paid_at, calculation_log,
       billing_cycle:billing_cycles(period_year, period_month)
     `)
@@ -377,6 +382,10 @@ export async function getTenantBillsWithPayments(
     status:               b.status,
     periodYear:           b.billing_cycle?.period_year  ?? 0,
     periodMonth:          b.billing_cycle?.period_month ?? 0,
+    openingReading:       b.opening_reading != null ? Number(b.opening_reading) : null,
+    closingReading:       b.closing_reading != null ? Number(b.closing_reading) : null,
+    unitsConsumed:        Number(b.units_consumed),
+    sharePercent:         Number(b.share_percent ?? 100),
     billedUnits:          Number(b.billed_units),
     ratePerUnit:          Number(b.rate_per_unit),
     currentCharges:       Number(b.current_charges),

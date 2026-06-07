@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   FileText,
   CreditCard,
+  Receipt,
   MessageSquare,
   Bell,
   User,
@@ -17,12 +18,13 @@ import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 
 const navItems = [
-  { label: 'Dashboard',   href: '/tenant/dashboard',   icon: LayoutDashboard },
-  { label: 'My Flat',     href: '/tenant/my-flat',     icon: FileText },
-  { label: 'My Bills',    href: '/tenant/my-bills',    icon: CreditCard },
-  { label: 'Complaints',  href: '/tenant/complaints',  icon: MessageSquare },
-  { label: 'Notifications', href: '/tenant/notifications', icon: Bell },
-  { label: 'Profile',     href: '/tenant/profile',     icon: User },
+  { label: 'Dashboard',    href: '/tenant/dashboard',    icon: LayoutDashboard },
+  { label: 'Current Bill', href: '/tenant/current-bill', icon: Receipt },
+  { label: 'My Flat',      href: '/tenant/my-flat',      icon: FileText },
+  { label: 'Bill History', href: '/tenant/my-bills',     icon: CreditCard },
+  { label: 'Complaints',   href: '/tenant/complaints',   icon: MessageSquare },
+  { label: 'Notifications',href: '/tenant/notifications',icon: Bell },
+  { label: 'Profile',      href: '/tenant/profile',      icon: User },
 ];
 
 export function TenantSidebar() {
