@@ -1,20 +1,51 @@
 import { requireAdmin } from '@/services/auth/authService';
+import { getBillsAdmin, markOverdueBills } from '@/services/billing/paymentService';
+import { createClient } from '@/lib/supabase/server';
 import { PageHeader } from '@/components/shared/page-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { Construction } from 'lucide-react';
+import { BillsTable } from './bills-table';
 
-export default async function Page() {
+type Props = { searchParams: Promise<Record<string, string>> };
+
+export default async function PaymentsPage({ searchParams }: Props) {
   await requireAdmin();
+
+  const params = await searchParams;
+  const buildingId  = params.building ?? '';
+  const periodYear  = params.year   ? parseInt(params.year,  10) : undefined;
+  const periodMonth = params.month  ? parseInt(params.month, 10) : undefined;
+  const status      = params.status ?? '';
+  const search      = params.search ?? '';
+
+  // Auto-advance eligible unpaid/partial bills to overdue
+  await markOverdueBills();
+
+  const supabase = await createClient();
+  const { data: buildings } = await supabase
+    .from('buildings')
+    .select('id, name')
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('name');
+
+  const result = await getBillsAdmin({
+    buildingId:  buildingId  || undefined,
+    periodYear,
+    periodMonth,
+    status:      status      || undefined,
+    search:      search      || undefined,
+  });
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Module" description="Coming soon" />
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 gap-3">
-          <Construction className="h-10 w-10 text-amber-500" />
-          <p className="text-base font-semibold text-gray-700">Coming in Sprint 2</p>
-          <p className="text-sm text-gray-500">This module will be built in the next sprint.</p>
-        </CardContent>
-      </Card>
+      <PageHeader
+        title="Payments & Bills"
+        description="Track outstanding balances, record tenant payments, and view overdue bills"
+      />
+      <BillsTable
+        bills={result.data ?? []}
+        buildings={buildings ?? []}
+        filters={{ buildingId, periodYear, periodMonth, status, search }}
+      />
     </div>
   );
 }

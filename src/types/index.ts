@@ -15,7 +15,7 @@ export type CycleStatus =
   | 'open'       // legacy
   | 'finalized'; // legacy
 export type BillStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'waived' | 'overdue' | 'cancelled';
-export type PaymentMethod = 'cash' | 'bank_transfer' | 'online' | 'other';
+export type PaymentMethod = 'cash' | 'bank_transfer' | 'stc_pay' | 'online' | 'other';
 export type NotificationChannel = 'email' | 'whatsapp' | 'in_app';
 export type NotificationType =
   | 'bill_generated'
@@ -251,11 +251,16 @@ export interface Payment {
   paid_at: string;
   recorded_by: string;
   notes: string | null;
+  image_url: string | null;
   is_reversed: boolean;
   reversed_at: string | null;
   reversed_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface PaymentWithRecorder extends Payment {
+  recorder_name: string;
 }
 
 export interface Complaint {
