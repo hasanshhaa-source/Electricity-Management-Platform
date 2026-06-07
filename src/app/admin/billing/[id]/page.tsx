@@ -4,6 +4,7 @@ import { requireAdmin } from '@/services/auth/authService';
 import { getCycleById, getCycleReadingStats } from '@/services/billing/cycleService';
 import { getReadingRowsForCycle } from '@/services/billing/readingService';
 import { getBillsForCycle } from '@/services/billing/companyBillService';
+import { getBillsForCycle as getFlatBillsForCycle } from '@/services/billing/billingCalculationService';
 import { PageHeader } from '@/components/shared/page-header';
 import { CycleStatusBadge } from '@/components/shared/status-badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, Building2, Calendar, CheckCircle2, Circle } from 'lucide-react';
 import { ReadingsTable } from './readings-table';
 import { CompanyBillsSection } from './company-bills-section';
+import { CalculationPreview } from './calculation-preview';
 import type { CycleStatus } from '@/types';
 
 type Props = { params: Promise<{ id: string }> };
@@ -48,12 +50,14 @@ export default async function BillingCyclePage({ params }: Props) {
   const building = cycle.building as any;
   const { totalMeters, readingsEntered } = statsResult;
 
-  const [rowsResult, billsResult] = await Promise.all([
+  const [rowsResult, billsResult, flatBillsResult] = await Promise.all([
     getReadingRowsForCycle(cycle.building_id, cycle.period_year, cycle.period_month, id),
     getBillsForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
+    getFlatBillsForCycle(id),
   ]);
-  const rows  = rowsResult.data  ?? [];
-  const bills = billsResult.data ?? [];
+  const rows      = rowsResult.data      ?? [];
+  const bills     = billsResult.data     ?? [];
+  const flatBills = flatBillsResult.data ?? [];
 
   const periodLabel = `${MONTH_NAMES[cycle.period_month - 1]} ${cycle.period_year}`;
   const currentStep = STATUS_ORDER[cycle.status] ?? 0;
@@ -174,6 +178,21 @@ export default async function BillingCyclePage({ params }: Props) {
             currency={building?.currency ?? 'SAR'}
             cycleStatus={cycle.status}
             initialBills={bills}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Billing calculation & issuance */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Bill Calculation — {periodLabel}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CalculationPreview
+            cycleId={id}
+            currency={building?.currency ?? 'SAR'}
+            cycleStatus={cycle.status}
+            initialBills={flatBills}
           />
         </CardContent>
       </Card>

@@ -25,11 +25,13 @@ export function FlatStatusBadge({ status }: { status: FlatStatus }) {
 
 export function BillStatusBadge({ status }: { status: BillStatus }) {
   const variants: Record<BillStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'destructive' | 'warning' }> = {
-    draft:   { label: 'Draft',   variant: 'secondary' },
-    unpaid:  { label: 'Unpaid',  variant: 'destructive' },
-    partial: { label: 'Partial', variant: 'warning' },
-    paid:    { label: 'Paid',    variant: 'success' },
-    waived:  { label: 'Waived',  variant: 'secondary' },
+    draft:     { label: 'Draft',     variant: 'secondary' },
+    unpaid:    { label: 'Unpaid',    variant: 'destructive' },
+    partial:   { label: 'Partial',   variant: 'warning' },
+    paid:      { label: 'Paid',      variant: 'success' },
+    waived:    { label: 'Waived',    variant: 'secondary' },
+    overdue:   { label: 'Overdue',   variant: 'destructive' },
+    cancelled: { label: 'Cancelled', variant: 'secondary' },
   };
   const { label, variant } = variants[status];
   return <Badge variant={variant}>{label}</Badge>;

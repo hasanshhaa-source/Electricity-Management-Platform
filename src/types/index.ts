@@ -14,7 +14,7 @@ export type CycleStatus =
   | 'closed'
   | 'open'       // legacy
   | 'finalized'; // legacy
-export type BillStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'waived';
+export type BillStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'waived' | 'overdue' | 'cancelled';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'online' | 'other';
 export type NotificationChannel = 'email' | 'whatsapp' | 'in_app';
 export type NotificationType =
@@ -226,6 +226,7 @@ export interface FlatBill {
   fixed_charge: number;
   tariff_rate_id: string | null;
   current_charges: number;
+  difference_adjustment: number;
   previous_balance: number;
   total_due: number;
   amount_paid: number;
