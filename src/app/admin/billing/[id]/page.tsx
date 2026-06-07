@@ -3,12 +3,14 @@ import Link from 'next/link';
 import { requireAdmin } from '@/services/auth/authService';
 import { getCycleById, getCycleReadingStats } from '@/services/billing/cycleService';
 import { getReadingRowsForCycle } from '@/services/billing/readingService';
+import { getBillsForCycle } from '@/services/billing/companyBillService';
 import { PageHeader } from '@/components/shared/page-header';
 import { CycleStatusBadge } from '@/components/shared/status-badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, Building2, Calendar, CheckCircle2, Circle } from 'lucide-react';
 import { ReadingsTable } from './readings-table';
+import { CompanyBillsSection } from './company-bills-section';
 import type { CycleStatus } from '@/types';
 
 type Props = { params: Promise<{ id: string }> };
@@ -46,13 +48,12 @@ export default async function BillingCyclePage({ params }: Props) {
   const building = cycle.building as any;
   const { totalMeters, readingsEntered } = statsResult;
 
-  const rowsResult = await getReadingRowsForCycle(
-    cycle.building_id,
-    cycle.period_year,
-    cycle.period_month,
-    id,
-  );
-  const rows = rowsResult.data ?? [];
+  const [rowsResult, billsResult] = await Promise.all([
+    getReadingRowsForCycle(cycle.building_id, cycle.period_year, cycle.period_month, id),
+    getBillsForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
+  ]);
+  const rows  = rowsResult.data  ?? [];
+  const bills = billsResult.data ?? [];
 
   const periodLabel = `${MONTH_NAMES[cycle.period_month - 1]} ${cycle.period_year}`;
   const currentStep = STATUS_ORDER[cycle.status] ?? 0;
@@ -76,9 +77,9 @@ export default async function BillingCyclePage({ params }: Props) {
         <CardContent className="pt-6 pb-5">
           <div className="flex items-center gap-0 overflow-x-auto">
             {STATUS_STEPS.map((step, i) => {
-              const stepOrder  = STATUS_ORDER[step.status] ?? i;
-              const isDone     = stepOrder < currentStep;
-              const isCurrent  = stepOrder === currentStep;
+              const stepOrder = STATUS_ORDER[step.status] ?? i;
+              const isDone    = stepOrder < currentStep;
+              const isCurrent = stepOrder === currentStep;
 
               return (
                 <div key={step.status} className="flex items-center min-w-0">
@@ -119,7 +120,7 @@ export default async function BillingCyclePage({ params }: Props) {
           </p>
         </div>
         <div className="rounded-lg border border-gray-100 bg-white p-4">
-          <p className="text-xs text-gray-500 mb-1">Readings</p>
+          <p className="text-xs text-gray-500 mb-1">Meter Readings</p>
           <p className="font-semibold text-gray-900">
             {readingsEntered} <span className="text-gray-400 font-normal">/ {totalMeters}</span>
           </p>
@@ -130,7 +131,7 @@ export default async function BillingCyclePage({ params }: Props) {
         </div>
       </div>
 
-      {/* Readings collection */}
+      {/* Meter readings collection */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -150,6 +151,29 @@ export default async function BillingCyclePage({ params }: Props) {
             periodMonth={cycle.period_month}
             cycleStatus={cycle.status}
             rows={rows}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Company bills */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Electricity Company Bills — {periodLabel}</CardTitle>
+            {bills.length > 0 && (
+              <Badge variant="default">{bills.length} bill{bills.length !== 1 ? 's' : ''}</Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <CompanyBillsSection
+            cycleId={id}
+            buildingId={cycle.building_id}
+            periodYear={cycle.period_year}
+            periodMonth={cycle.period_month}
+            currency={building?.currency ?? 'SAR'}
+            cycleStatus={cycle.status}
+            initialBills={bills}
           />
         </CardContent>
       </Card>

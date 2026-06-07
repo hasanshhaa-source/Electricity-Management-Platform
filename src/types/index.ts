@@ -176,11 +176,14 @@ export interface MeterReading {
 export interface ElectricityCompanyBill {
   id: string;
   building_id: string;
+  cycle_id: string | null;
   bill_number: string;
+  electricity_account_number: string | null;
   period_year: number;
   period_month: number;
   total_amount: number;
   total_units: number | null;
+  bill_issue_date: string | null;
   due_date: string;
   paid_at: string | null;
   image_url: string | null;
