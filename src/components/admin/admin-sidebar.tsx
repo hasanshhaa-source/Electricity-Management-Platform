@@ -12,7 +12,7 @@ import {
   CreditCard,
   Bell,
   ClipboardList,
-  Settings,
+  MessageSquare,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
@@ -60,6 +60,11 @@ const navItems = [
     label: 'Payments',
     href: '/admin/payments',
     icon: CreditCard,
+  },
+  {
+    label: 'Complaints',
+    href: '/admin/complaints',
+    icon: MessageSquare,
   },
   {
     label: 'Notifications',

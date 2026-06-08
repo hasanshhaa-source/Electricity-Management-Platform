@@ -214,3 +214,39 @@ export function complaintSubmittedTemplate(params: {
 
   return { subject: emailSubject, html: layout(emailSubject, body, params.appUrl), text };
 }
+
+export function complaintReplyTemplate(params: {
+  tenantName:   string;
+  flatNumber:   string;
+  buildingName: string;
+  subject:      string;
+  reply:        string;
+  newStatus:    string;
+}) {
+  const emailSubject = `Re: ${params.subject} — Update from ElectroManage`;
+
+  const statusLabel: Record<string, string> = {
+    reviewed:    'Reviewed',
+    in_progress: 'In Progress',
+    resolved:    'Resolved',
+    closed:      'Closed',
+  };
+
+  const body = `
+    <p style="font-size:14px;color:#374151;">Hi ${params.tenantName},</p>
+    <p style="font-size:14px;color:#374151;">We have an update regarding your submission: <strong>${params.subject}</strong>.</p>
+    <table cellpadding="0" cellspacing="0" style="margin:16px 0;width:100%;">
+      ${row('Building', params.buildingName)}
+      ${row('Flat', `Flat ${params.flatNumber}`)}
+      ${row('Status', statusLabel[params.newStatus] ?? params.newStatus)}
+    </table>
+    <div style="background:#f0fdf4;border-left:3px solid #16a34a;padding:12px 16px;margin:16px 0;font-size:14px;color:#166534;">
+      <p style="margin:0 0 4px;font-weight:600;">Admin Response:</p>
+      ${params.reply.replace(/\n/g, '<br>')}
+    </div>
+    <p style="font-size:14px;color:#374151;">Log in to your tenant portal to view the full details.</p>`;
+
+  const text = `Hi ${params.tenantName},\n\nUpdate on "${params.subject}" — Status: ${statusLabel[params.newStatus] ?? params.newStatus}\n\nAdmin response:\n${params.reply}`;
+
+  return { subject: emailSubject, html: layout(emailSubject, body), text };
+}

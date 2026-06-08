@@ -55,6 +55,7 @@ export function CycleStatusBadge({ status }: { status: CycleStatus }) {
 export function TicketStatusBadge({ status }: { status: TicketStatus }) {
   const variants: Record<TicketStatus, { label: string; variant: 'default' | 'secondary' | 'success' | 'destructive' | 'warning' }> = {
     open:        { label: 'Open',        variant: 'warning' },
+    reviewed:    { label: 'Reviewed',    variant: 'default' },
     in_progress: { label: 'In Progress', variant: 'default' },
     resolved:    { label: 'Resolved',    variant: 'success' },
     closed:      { label: 'Closed',      variant: 'secondary' },

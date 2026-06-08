@@ -24,10 +24,11 @@ export type NotificationType =
   | 'payment_confirmed'
   | 'tenancy_approved'
   | 'tenancy_rejected'
-  | 'complaint_submitted';
+  | 'complaint_submitted'
+  | 'complaint_reply';
 export type NotificationStatus = 'pending' | 'sent' | 'failed' | 'skipped';
 export type TicketType = 'complaint' | 'recommendation' | 'query' | 'maintenance_request' | 'other';
-export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type TicketStatus = 'open' | 'reviewed' | 'in_progress' | 'resolved' | 'closed';
 
 // ─── Database Entities ────────────────────────────────────────
 
@@ -271,10 +272,15 @@ export interface Complaint {
   type: TicketType;
   subject: string;
   description: string;
+  attachment_url: string | null;
   status: TicketStatus;
   resolved_by: string | null;
   resolved_at: string | null;
   resolution_note: string | null;
+  admin_notes: string | null;
+  admin_reply: string | null;
+  replied_at: string | null;
+  replied_by: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;

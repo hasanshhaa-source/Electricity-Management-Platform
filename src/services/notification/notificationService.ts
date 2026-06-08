@@ -20,6 +20,7 @@ import {
   overdueReminderTemplate,
   paymentReminderTemplate,
   complaintSubmittedTemplate,
+  complaintReplyTemplate,
 } from './notificationTemplates';
 
 // ── Provider registry ─────────────────────────────────────────────────────────
@@ -256,6 +257,30 @@ export async function notifyComplaintSubmitted(params: {
     title:          tpl.subject,
     body:           `From ${params.tenantName} — Flat ${params.flatNumber}`,
     recipientEmail: params.adminEmail,
+    emailSubject:   tpl.subject,
+    emailHtml:      tpl.html,
+    emailText:      tpl.text,
+  });
+}
+
+export async function notifyComplaintReply(params: {
+  userId:       string;
+  tenantEmail:  string;
+  tenantName:   string;
+  flatNumber:   string;
+  buildingName: string;
+  subject:      string;
+  reply:        string;
+  newStatus:    string;
+}): Promise<void> {
+  const tpl = complaintReplyTemplate(params);
+  await dispatchNotification({
+    userId:         params.userId,
+    type:           'complaint_reply',
+    channel:        'email',
+    title:          tpl.subject,
+    body:           `Status updated to ${params.newStatus}`,
+    recipientEmail: params.tenantEmail,
     emailSubject:   tpl.subject,
     emailHtml:      tpl.html,
     emailText:      tpl.text,

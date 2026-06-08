@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/services/auth/authService';
+import { getCurrentUser, requireAdmin } from '@/services/auth/authService';
 import { createClient } from '@/lib/supabase/server';
 import { successResponse, errorResponse } from '@/lib/utils/api';
 import { z } from 'zod';
+import { getComplaints } from '@/services/complaints/complaintService';
+
+// ── GET — admin list with filters ──────────────────────────────────────────────
+
+export async function GET(req: NextRequest) {
+  try { await requireAdmin(); } catch { return NextResponse.json(errorResponse('Forbidden'), { status: 403 }); }
+
+  const p = req.nextUrl.searchParams;
+  const rows = await getComplaints({
+    buildingId: p.get('building_id') ?? undefined,
+    type:       p.get('type')        ?? undefined,
+    status:     p.get('status')      ?? undefined,
+    search:     p.get('search')      ?? undefined,
+  });
+
+  return NextResponse.json(successResponse(rows));
+}
+
 import { notifyComplaintSubmitted } from '@/services/notification/notificationService';
 import { getNotificationSettings } from '@/services/notification/notificationSettings';
 
