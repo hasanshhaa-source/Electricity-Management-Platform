@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Calculator, CheckCircle2, AlertTriangle, Loader2,
-  SendHorizonal, RefreshCw, ChevronDown, ChevronRight,
+  SendHorizonal, RefreshCw, ChevronDown, ChevronRight, Download,
 } from 'lucide-react';
 import { BillStatusBadge } from '@/components/shared/status-badge';
 import type { FlatBillPreview } from '@/services/billing/billingCalculationService';
@@ -202,7 +202,23 @@ export function CalculationPreview({
                       {bill.previousBalance > 0 ? `+${fmt(bill.previousBalance)}` : '—'}
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold">{fmt(bill.totalDue)}</TableCell>
-                    <TableCell><BillStatusBadge status={bill.status as BillStatus} /></TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <BillStatusBadge status={bill.status as BillStatus} />
+                        {bill.id && bill.status !== 'draft' && (
+                          <a
+                            href={`/api/bills/${bill.id}/pdf`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                            title="Download PDF"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    </TableCell>
                   </TableRow>
 
                   {expandedRow === bill.flatId && (

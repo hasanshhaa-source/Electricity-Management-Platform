@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/services/auth/authService';
-import { AdminSidebar } from '@/components/admin/admin-sidebar';
-import { AdminHeader } from '@/components/admin/admin-header';
+import { AdminLayoutShell } from '@/components/admin/admin-layout-shell';
 import { createClient } from '@/lib/supabase/server';
 
 async function getPendingTenancyCount(): Promise<number> {
@@ -24,17 +23,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const pendingCount = await getPendingTenancyCount();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
-      <div className="hidden lg:flex lg:flex-shrink-0">
-        <AdminSidebar pendingCount={pendingCount} />
-      </div>
-
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <AdminHeader user={user} />
-        <main className="flex-1 overflow-y-auto p-6">
-          {children}
-        </main>
-      </div>
-    </div>
+    <AdminLayoutShell user={user} pendingCount={pendingCount}>
+      {children}
+    </AdminLayoutShell>
   );
 }

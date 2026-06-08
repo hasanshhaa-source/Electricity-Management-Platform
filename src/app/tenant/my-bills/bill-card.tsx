@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Receipt, CheckCircle2, Clock } from 'lucide-react';
+import { ChevronDown, ChevronRight, Receipt, CheckCircle2, Clock, Download } from 'lucide-react';
 import { BillStatusBadge } from '@/components/shared/status-badge';
 import type { TenantBillWithPayments } from '@/services/billing/paymentService';
 
@@ -45,7 +45,7 @@ export function BillCard({ bill, currency }: { bill: TenantBillWithPayments; cur
           <span className="font-semibold text-gray-900 min-w-[120px]">{period}</span>
           <BillStatusBadge status={bill.status as any} />
 
-          <div className="flex gap-4 ml-auto text-sm">
+          <div className="flex gap-4 ml-auto text-sm items-center">
             <div className="text-right">
               <p className="text-xs text-gray-500">Total Due</p>
               <p className="font-semibold">{currency} {fmt(bill.totalDue)}</p>
@@ -70,6 +70,17 @@ export function BillCard({ bill, currency }: { bill: TenantBillWithPayments; cur
                 {new Date(bill.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
               </p>
             </div>
+            <a
+              href={`/api/bills/${bill.id}/pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+              title="Download PDF"
+            >
+              <Download className="h-3.5 w-3.5" />
+              PDF
+            </a>
           </div>
         </div>
       </button>
