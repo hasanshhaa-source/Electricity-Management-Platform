@@ -7,6 +7,7 @@ import { successResponse, errorResponse } from '@/lib/utils/api';
 import { createClient } from '@/lib/supabase/server';
 import { notifyPaymentConfirmed } from '@/services/notification/notificationService';
 import { getNotificationSettings } from '@/services/notification/notificationSettings';
+import { getSystemSettings } from '@/services/settings/systemSettingsService';
 
 export async function GET(req: NextRequest) {
   try { await requireAdmin(); } catch { return NextResponse.json(errorResponse('Forbidden'), { status: 403 }); }
@@ -30,6 +31,34 @@ export async function POST(req: NextRequest) {
       errorResponse(parsed.error.issues[0]?.message ?? 'Invalid input'),
       { status: 422 },
     );
+  }
+
+  const sysSettings = await getSystemSettings();
+
+  // Enforce payment reference requirement
+  if (sysSettings.require_payment_reference && !parsed.data.reference_no?.trim()) {
+    return NextResponse.json(errorResponse('Payment reference number is required'), { status: 422 });
+  }
+
+  // Enforce allowed payment methods
+  if (!sysSettings.allowed_payment_methods.includes(parsed.data.payment_method)) {
+    return NextResponse.json(errorResponse(`Payment method '${parsed.data.payment_method}' is not allowed`), { status: 422 });
+  }
+
+  // Enforce partial payment restriction
+  if (!sysSettings.allow_partial_payments) {
+    const supabase = await createClient();
+    const { data: bill } = await supabase
+      .from('flat_bills')
+      .select('outstanding_balance')
+      .eq('id', parsed.data.bill_id)
+      .single();
+    if (bill && Math.abs(parsed.data.amount - Number(bill.outstanding_balance)) > 0.01) {
+      return NextResponse.json(
+        errorResponse(`Partial payments are not allowed. Full outstanding amount is ${bill.outstanding_balance}`),
+        { status: 422 },
+      );
+    }
   }
 
   const result = await recordPayment(parsed.data, admin.id);

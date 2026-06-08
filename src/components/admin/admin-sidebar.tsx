@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Archive,
   LineChart,
+  Settings,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
@@ -82,6 +83,11 @@ const navItems = [
     label: 'Notifications',
     href: '/admin/notifications',
     icon: Bell,
+  },
+  {
+    label: 'Settings',
+    href: '/admin/settings',
+    icon: Settings,
   },
 ];
 

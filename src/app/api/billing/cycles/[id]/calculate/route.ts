@@ -4,9 +4,10 @@ import { requireAdmin } from '@/services/auth/authService';
 import { calculateForCycle } from '@/services/billing/billingCalculationService';
 import { logAudit } from '@/services/audit/auditService';
 import { successResponse, errorResponse } from '@/lib/utils/api';
+import { getSystemSettings } from '@/services/settings/systemSettingsService';
 
 const schema = z.object({
-  diff_method: z.enum(['proportional', 'equal']).default('proportional'),
+  diff_method: z.enum(['proportional', 'equal', 'manual']).optional(),
 });
 
 type Params = { params: Promise<{ id: string }> };
@@ -18,7 +19,10 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(body);
-  const diffMethod = parsed.success ? parsed.data.diff_method : 'proportional';
+  const sysSettings = await getSystemSettings();
+  const rawMethod = (parsed.success && parsed.data.diff_method) ? parsed.data.diff_method : sysSettings.default_diff_method;
+  // calculationEngine only supports proportional/equal; fall back to proportional for 'manual'
+  const diffMethod = (rawMethod === 'equal' ? 'equal' : 'proportional') as 'proportional' | 'equal';
 
   const result = await calculateForCycle(id, admin.id, diffMethod);
   if (result.error) return NextResponse.json(errorResponse(result.error), { status: 400 });

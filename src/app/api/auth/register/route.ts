@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { successResponse, errorResponse } from '@/lib/utils/api';
 import { z } from 'zod';
+import { getSystemSettings } from '@/services/settings/systemSettingsService';
 
 const schema = z.object({
   auth_id: z.string().uuid(),
@@ -16,6 +17,14 @@ export async function POST(request: NextRequest) {
 
   if (!parsed.success) {
     return NextResponse.json(errorResponse(parsed.error.issues[0].message), { status: 400 });
+  }
+
+  const sysSettings = await getSystemSettings();
+  if (!sysSettings.allow_self_registration) {
+    return NextResponse.json(
+      errorResponse('Self-registration is currently disabled. Please contact the administrator.'),
+      { status: 403 },
+    );
   }
 
   const supabase = await createAdminClient();
