@@ -13,6 +13,8 @@ import {
   Bell,
   ClipboardList,
   MessageSquare,
+  Archive,
+  LineChart,
   LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
@@ -65,6 +67,16 @@ const navItems = [
     label: 'Complaints',
     href: '/admin/complaints',
     icon: MessageSquare,
+  },
+  {
+    label: 'Archive',
+    href: '/admin/archive',
+    icon: Archive,
+  },
+  {
+    label: 'Insights',
+    href: '/admin/insights',
+    icon: LineChart,
   },
   {
     label: 'Notifications',
