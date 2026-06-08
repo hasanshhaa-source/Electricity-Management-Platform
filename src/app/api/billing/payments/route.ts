@@ -4,6 +4,9 @@ import { recordPayment, getPaymentsForBill } from '@/services/billing/paymentSer
 import { paymentSchema } from '@/lib/validation/billing';
 import { logAudit } from '@/services/audit/auditService';
 import { successResponse, errorResponse } from '@/lib/utils/api';
+import { createClient } from '@/lib/supabase/server';
+import { notifyPaymentConfirmed } from '@/services/notification/notificationService';
+import { getNotificationSettings } from '@/services/notification/notificationSettings';
 
 export async function GET(req: NextRequest) {
   try { await requireAdmin(); } catch { return NextResponse.json(errorResponse('Forbidden'), { status: 403 }); }
@@ -45,5 +48,52 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  // Fire payment_confirmed email (non-blocking)
+  sendPaymentConfirmation(parsed.data.bill_id, parsed.data.amount).catch(err =>
+    console.error('[notify] payment_confirmed background error:', err),
+  );
+
   return NextResponse.json(successResponse(result.data), { status: 201 });
+}
+
+async function sendPaymentConfirmation(billId: string, amount: number) {
+  const settings = await getNotificationSettings();
+  if (!settings.payment_confirmed_enabled) return;
+
+  const supabase = await createClient();
+
+  const { data: bill } = await supabase
+    .from('flat_bills')
+    .select(`
+      id, outstanding_balance,
+      billing_cycle:billing_cycles(period_year, period_month,
+        building:buildings(name, currency)),
+      tenancy:tenancies(user:users(id, email, full_name)),
+      flat:flats(flat_number)
+    `)
+    .eq('id', billId)
+    .single();
+
+  if (!bill) return;
+
+  const user     = (bill as any).tenancy?.user;
+  const cycle    = (bill as any).billing_cycle;
+  const flat     = (bill as any).flat;
+  const building = cycle?.building;
+
+  if (!user?.email || !cycle || !flat) return;
+
+  await notifyPaymentConfirmed({
+    userId:       user.id,
+    tenantEmail:  user.email,
+    tenantName:   user.full_name,
+    flatNumber:   flat.flat_number,
+    buildingName: building?.name ?? '—',
+    periodYear:   cycle.period_year,
+    periodMonth:  cycle.period_month,
+    amount,
+    outstanding:  Number(bill.outstanding_balance),
+    currency:     building?.currency ?? 'SAR',
+    billId:       bill.id,
+  });
 }

@@ -23,7 +23,8 @@ export type NotificationType =
   | 'overdue'
   | 'payment_confirmed'
   | 'tenancy_approved'
-  | 'tenancy_rejected';
+  | 'tenancy_rejected'
+  | 'complaint_submitted';
 export type NotificationStatus = 'pending' | 'sent' | 'failed' | 'skipped';
 export type TicketType = 'complaint' | 'recommendation' | 'query' | 'maintenance_request' | 'other';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
