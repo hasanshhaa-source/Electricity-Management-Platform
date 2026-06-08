@@ -239,6 +239,10 @@ export interface FlatBill {
   calculation_log: Record<string, unknown>;
   calculated_by: string | null;
   calculated_at: string | null;
+  manual_adjustment_amount: number;
+  manual_adjustment_note: string | null;
+  manual_adjustment_by: string | null;
+  manual_adjustment_at: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;

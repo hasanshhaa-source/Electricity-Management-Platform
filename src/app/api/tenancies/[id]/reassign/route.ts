@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   await logAudit({
     entity_type: 'tenancies',
     entity_id: id,
-    action: 'UPDATE',
+    action: 'TENANCY_REASSIGN',
     actor_id: admin.id,
     actor_role: 'admin',
     new_data: { new_flat_id: parsed.data.new_flat_id },
