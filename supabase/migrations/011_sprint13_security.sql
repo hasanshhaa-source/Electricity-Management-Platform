@@ -48,7 +48,7 @@ CREATE POLICY flats_tenant_scoped ON flats
     OR (
       current_user_role() = 'tenant' AND (
         -- own flat via active tenancy
-        id IN (SELECT flat_id FROM tenant_flat_ids())
+        id IN (SELECT * FROM tenant_flat_ids())
         -- OR flat is available (for registration purposes)
         OR occupancy_status = 'available'
       )
