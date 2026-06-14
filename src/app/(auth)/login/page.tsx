@@ -35,23 +35,29 @@ function LoginForm() {
     });
 
     if (error) {
-      setServerError(error.message);
+      setServerError(`[Auth] ${error.message}`);
       setLoading(false);
       return;
     }
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      setServerError('Authentication failed. Please try again.');
+      setServerError('[Auth] Session not established after login — check Supabase Site URL and Redirect URLs configuration.');
       setLoading(false);
       return;
     }
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('users')
       .select('role, is_active')
       .eq('auth_id', user.id)
       .single();
+
+    if (profileError) {
+      setServerError(`[DB] Could not load user profile: ${profileError.message} — your account may not have been created correctly.`);
+      setLoading(false);
+      return;
+    }
 
     if (!profile?.is_active) {
       setServerError('Your account has been deactivated. Contact admin.');

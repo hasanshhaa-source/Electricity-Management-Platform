@@ -92,13 +92,13 @@ export default function RegisterPage() {
     });
 
     if (authError) {
-      setServerError(authError.message);
+      setServerError(`[Auth] ${authError.message}`);
       setLoading(false);
       return;
     }
 
     if (!authData.user) {
-      setServerError('Registration failed. Please try again.');
+      setServerError('[Auth] signUp returned no user — email confirmation may be enabled in Supabase. Please disable it under Authentication → Providers → Email → Confirm email.');
       setLoading(false);
       return;
     }
@@ -117,7 +117,7 @@ export default function RegisterPage() {
 
     const json = await res.json();
     if (!res.ok || json.error) {
-      setServerError(json.error ?? 'Failed to create profile');
+      setServerError(`[API ${res.status}] ${json.error ?? 'Failed to create profile'}`);
       setLoading(false);
       return;
     }
