@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { successResponse, errorResponse } from '@/lib/utils/api';
 import { z } from 'zod';
-import { getSystemSettings } from '@/services/settings/systemSettingsService';
 
 const schema = z.object({
   auth_id: z.string().uuid(),
@@ -19,22 +18,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(errorResponse(parsed.error.issues[0].message), { status: 400 });
   }
 
-  const sysSettings = await getSystemSettings();
-  if (!sysSettings.allow_self_registration) {
+  const supabase = createAdminClient();
+
+  // Check self-registration setting — use maybeSingle so missing row doesn't throw
+  const { data: settings } = await supabase
+    .from('system_settings')
+    .select('allow_self_registration')
+    .maybeSingle();
+
+  // Default to allowed if settings row is missing
+  if (settings && settings.allow_self_registration === false) {
     return NextResponse.json(
       errorResponse('Self-registration is currently disabled. Please contact the administrator.'),
       { status: 403 },
     );
   }
 
-  const supabase = await createAdminClient();
-
   // Check email not already used
   const { data: existing } = await supabase
     .from('users')
     .select('id')
     .eq('email', parsed.data.email)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     return NextResponse.json(errorResponse('Email already registered'), { status: 409 });
@@ -53,7 +58,8 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
-    return NextResponse.json(errorResponse(error.message), { status: 500 });
+    console.error('Register insert error:', error);
+    return NextResponse.json(errorResponse(`Registration failed: ${error.message}`), { status: 500 });
   }
 
   return NextResponse.json(successResponse(data), { status: 201 });
