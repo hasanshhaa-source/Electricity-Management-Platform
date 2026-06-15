@@ -6,7 +6,6 @@ import { PageHeader } from '@/components/shared/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TenancyStatusBadge, BillStatusBadge } from '@/components/shared/status-badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import {
   Building2, DoorOpen, FileText, MessageSquare, Clock,
@@ -68,9 +67,7 @@ export default async function TenantDashboardPage() {
           <AlertTitle>No flat assigned</AlertTitle>
           <AlertDescription className="flex items-center gap-4">
             <span>You haven&apos;t requested a flat yet.</span>
-            <Button asChild size="sm" variant="warning">
-              <Link href="/tenant/my-flat">Request a Flat</Link>
-            </Button>
+            <Link href="/tenant/my-flat" className="inline-flex items-center rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 transition-colors">Request a Flat</Link>
           </AlertDescription>
         </Alert>
       ) : tenancy.status === 'pending' ? (
@@ -88,9 +85,7 @@ export default async function TenantDashboardPage() {
           <AlertTitle>Outstanding balance: {currency} {fmt(totalOutstanding)}</AlertTitle>
           <AlertDescription className="flex items-center gap-4">
             <span>Please settle your outstanding bills before the due date.</span>
-            <Button asChild size="sm" variant="outline">
-              <Link href="/tenant/my-bills">View Bills</Link>
-            </Button>
+            <Link href="/tenant/my-bills" className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors">View Bills</Link>
           </AlertDescription>
         </Alert>
       ) : tenancy.status === 'active' ? (
