@@ -31,7 +31,11 @@ export default async function TenantDetailPage({ params }: Props) {
   const { id } = await params;
 
   const result = await getTenantById(id);
-  if (result.error || !result.data) notFound();
+  if (result.error) {
+    console.error('[TenantDetailPage] getTenantById error:', result.error);
+    throw new Error(`Failed to load tenant: ${result.error}`);
+  }
+  if (!result.data) notFound();
   const tenant = result.data;
   const tenancyHistory = await getTenancyHistory(id);
   const activeTenancy = (tenancyHistory as any[]).find((t) => t.status === 'active');
