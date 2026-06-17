@@ -10,8 +10,13 @@ ALTER TABLE electricity_company_bills
   ADD COLUMN IF NOT EXISTS bill_issue_date            DATE;
 
 -- Drop the old per-period unique constraint (allows multiple bills per building/month)
+-- NOTE: Postgres truncates auto-generated constraint names to 63 chars, and the
+-- actual stored name is "...period_mo_key" (not "...period_month_key") — drop both
+-- spellings so this works regardless of which truncation Postgres produced.
 ALTER TABLE electricity_company_bills
   DROP CONSTRAINT IF EXISTS electricity_company_bills_building_id_period_year_period_month_key;
+ALTER TABLE electricity_company_bills
+  DROP CONSTRAINT IF EXISTS electricity_company_bills_building_id_period_year_period_mo_key;
 
 -- Unique bill reference per building
 ALTER TABLE electricity_company_bills
