@@ -307,7 +307,7 @@ export async function calculateForCycle(
 
   const [{ data: flats }, { data: tenancies }] = await Promise.all([
     supabase.from('flats').select('id, flat_number').in('id', flatIds),
-    supabase.from('tenancies').select('id, user:users(full_name)').in('id', tenancyIds),
+    supabase.from('tenancies').select('id, user:users!user_id(full_name)').in('id', tenancyIds),
   ]);
 
   const flatMap    = new Map((flats ?? []).map((f: any) => [f.id, f.flat_number]));
@@ -346,7 +346,7 @@ export async function getBillsForCycle(cycleId: string): Promise<ApiResponse<Fla
       units_consumed, rate_per_unit, current_charges,
       difference_adjustment, previous_balance, total_due, calculation_log,
       flat:flats(flat_number),
-      tenancy:tenancies(user:users(full_name))
+      tenancy:tenancies(user:users!user_id(full_name))
     `)
     .eq('billing_cycle_id', cycleId)
     .eq('is_current_version', true)

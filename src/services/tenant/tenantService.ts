@@ -9,7 +9,7 @@ export async function getAllTenants(): Promise<ApiResponse<TenantWithTenancy[]>>
     .from('users')
     .select(`
       *,
-      active_tenancy:tenancies(
+      active_tenancy:tenancies!tenancies_user_id_fkey(
         id, status, start_date, end_date, flat_id,
         flat:flats(
           id, flat_number, floor, status,
@@ -40,7 +40,7 @@ export async function getTenantById(id: string): Promise<ApiResponse<TenantWithT
     .from('users')
     .select(`
       *,
-      tenancies(
+      tenancies!tenancies_user_id_fkey(
         id, status, start_date, end_date, flat_id, notes, approved_at,
         flat:flats(
           id, flat_number, floor, status,

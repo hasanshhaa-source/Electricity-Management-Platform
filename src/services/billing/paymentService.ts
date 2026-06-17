@@ -235,7 +235,7 @@ export async function getBillsAdmin(
       billed_units, current_charges, difference_adjustment,
       previous_balance, total_due, amount_paid, outstanding_balance, due_date,
       flat:flats(flat_number, building:buildings(id, name)),
-      tenancy:tenancies(user:users(full_name, email)),
+      tenancy:tenancies(user:users!user_id(full_name, email)),
       billing_cycle:billing_cycles(period_year, period_month)
     `)
     .eq('is_current_version', true)

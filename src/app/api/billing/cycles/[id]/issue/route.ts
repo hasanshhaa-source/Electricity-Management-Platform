@@ -47,7 +47,7 @@ async function sendBillNotifications(cycleId: string) {
       billing_cycle:billing_cycles(period_year, period_month,
         building:buildings(name, currency)),
       tenancy:tenancies(
-        user:users(id, email, full_name)
+        user:users!user_id(id, email, full_name)
       ),
       flat:flats(flat_number)
     `)

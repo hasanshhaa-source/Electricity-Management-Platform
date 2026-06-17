@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
       id, flat_id, tenancy_id, total_due, outstanding_balance, due_date,
       billing_cycle:billing_cycles(period_year, period_month),
       tenancy:tenancies(
-        user:users(id, email, full_name)
+        user:users!user_id(id, email, full_name)
       )
     `)
     .in('status', ['overdue', 'unpaid', 'partial'])

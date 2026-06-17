@@ -141,7 +141,7 @@ export async function getDashboardData(filters: DashboardFilters): Promise<Dashb
   ] = await Promise.all([
     supabase.from('buildings').select('id, name, city, currency').eq('is_active', true).is('deleted_at', null),
     supabase.from('flats').select('id, building_id, flat_number, status').eq('is_active', true).is('deleted_at', null),
-    supabase.from('tenancies').select('id, flat_id, user:users(full_name)').eq('status', 'active'),
+    supabase.from('tenancies').select('id, flat_id, user:users!user_id(full_name)').eq('status', 'active'),
     supabase.from('electricity_company_bills').select('building_id, total_amount, total_units').eq('period_year', year).eq('period_month', month),
     supabase.from('billing_cycles').select('id, building_id, status').eq('period_year', year).eq('period_month', month),
     supabase.from('billing_cycles').select('id, period_year, period_month, building_id, status').gte('period_year', now.getFullYear() - 2).order('period_year').order('period_month'),

@@ -21,7 +21,7 @@ async function getFlatsWithTenants(buildingId: string) {
       *,
       tenancies(
         id, status, start_date,
-        user:users(id, full_name, email)
+        user:users!user_id(id, full_name, email)
       )
     `)
     .eq('building_id', buildingId)

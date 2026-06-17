@@ -93,7 +93,7 @@ export async function getInsightData(buildingId?: string): Promise<InsightData> 
   ] = await Promise.all([
     supabase.from('buildings').select('id, name, currency').eq('is_active', true).is('deleted_at', null),
     supabase.from('flats').select('id, flat_number, building_id').eq('is_active', true).is('deleted_at', null),
-    supabase.from('tenancies').select('id, flat_id, user:users(full_name, email)').eq('status', 'active'),
+    supabase.from('tenancies').select('id, flat_id, user:users!user_id(full_name, email)').eq('status', 'active'),
     supabase.from('billing_cycles')
       .select('id, period_year, period_month, building_id')
       .gte('period_year', new Date().getFullYear() - 2)

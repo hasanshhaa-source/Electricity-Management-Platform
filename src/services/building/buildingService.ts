@@ -154,7 +154,7 @@ export async function getAllFlatsWithTenants(): Promise<ApiResponse<Flat[]>> {
       building:buildings(id, name, city),
       active_tenancy:tenancies!inner(
         id, status, start_date,
-        user:users(id, full_name, email, phone)
+        user:users!user_id(id, full_name, email, phone)
       )
     `)
     .is('deleted_at', null)

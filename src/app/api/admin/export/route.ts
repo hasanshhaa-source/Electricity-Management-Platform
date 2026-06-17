@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
           id,
           flat:flats(flat_number, building:buildings(name)),
           billing_cycle:billing_cycles(period_year, period_month),
-          tenancy:tenancies(user:users(full_name, email))
+          tenancy:tenancies(user:users!user_id(full_name, email))
         )
       `)
       .order('payment_date', { ascending: false });
@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
       .from('users')
       .select(`
         id, email, full_name, phone, is_active, created_at,
-        tenancies(status, started_at, ended_at,
+        tenancies!tenancies_user_id_fkey(status, started_at, ended_at,
           flat:flats(flat_number, building:buildings(name)))
       `)
       .eq('role', 'tenant')
@@ -182,7 +182,7 @@ export async function GET(req: NextRequest) {
       amount_paid, outstanding_balance, manual_adjustment_amount,
       billing_cycle:billing_cycles(period_year, period_month),
       flat:flats(flat_number, building:buildings(name, currency)),
-      tenancy:tenancies(user:users(full_name, email))
+      tenancy:tenancies(user:users!user_id(full_name, email))
     `)
     .eq('is_current_version', true)
     .order('due_date', { ascending: false });

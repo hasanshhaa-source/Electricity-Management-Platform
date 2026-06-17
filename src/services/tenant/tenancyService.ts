@@ -172,7 +172,7 @@ export async function getAllTenancies(options?: {
     .from('tenancies')
     .select(`
       *,
-      user:users(id, email, full_name, phone),
+      user:users!user_id(id, email, full_name, phone),
       flat:flats(
         id, flat_number, floor, status,
         building:buildings(id, name, city)

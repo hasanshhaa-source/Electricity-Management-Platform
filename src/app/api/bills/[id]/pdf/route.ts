@@ -32,7 +32,7 @@ export async function GET(
         building:buildings(name, address)
       ),
       tenancy:tenancies(
-        user:users(full_name, email)
+        user:users!user_id(full_name, email)
       )
     `)
     .eq('id', id)

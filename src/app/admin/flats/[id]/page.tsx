@@ -18,7 +18,7 @@ async function getFlatWithHistory(id: string) {
   const supabase = await createClient();
   const { data } = await supabase
     .from('tenancies')
-    .select('id, status, start_date, end_date, notes, user:users(id, full_name, email, phone)')
+    .select('id, status, start_date, end_date, notes, user:users!user_id(id, full_name, email, phone)')
     .eq('flat_id', id)
     .order('created_at', { ascending: false })
     .limit(10);

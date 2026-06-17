@@ -16,7 +16,7 @@ async function getAllFlats() {
     .select(`
       *,
       building:buildings(id, name, city),
-      tenancies(id, status, user:users(full_name, email))
+      tenancies(id, status, user:users!user_id(full_name, email))
     `)
     .is('deleted_at', null)
     .eq('is_active', true)

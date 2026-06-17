@@ -97,7 +97,7 @@ async function sendPaymentConfirmation(billId: string, amount: number) {
       id, outstanding_balance,
       billing_cycle:billing_cycles(period_year, period_month,
         building:buildings(name, currency)),
-      tenancy:tenancies(user:users(id, email, full_name)),
+      tenancy:tenancies(user:users!user_id(id, email, full_name)),
       flat:flats(flat_number)
     `)
     .eq('id', billId)
