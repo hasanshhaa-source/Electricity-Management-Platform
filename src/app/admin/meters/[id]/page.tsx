@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { MeterTypeBadge } from '@/components/shared/meter-type-badge';
 import { MeterForm } from '@/components/admin/meter-form';
 import { AllocationEditor } from '@/components/admin/allocation-editor';
+import { IndividualMeterLink } from '@/components/admin/individual-meter-link';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChevronLeft } from 'lucide-react';
@@ -58,21 +59,13 @@ export default async function MeterDetailPage({ params }: Props) {
           </Card>
         )}
 
-        {meter.meter_type === 'individual' && meter.allocations.length > 0 && (
-          <Card>
-            <CardHeader><CardTitle>Linked Flat</CardTitle></CardHeader>
-            <CardContent>
-              <div className="rounded-lg bg-gray-50 p-3">
-                <p className="font-medium text-gray-900">
-                  Flat {(meter.allocations[0].flat as any)?.flat_number}
-                  {(meter.allocations[0].flat as any)?.floor != null
-                    ? ` — Floor ${(meter.allocations[0].flat as any).floor}`
-                    : ''}
-                </p>
-                <p className="text-sm text-gray-500 mt-1">100% allocation</p>
-              </div>
-            </CardContent>
-          </Card>
+        {meter.meter_type === 'individual' && (
+          <IndividualMeterLink
+            meterId={meter.id}
+            buildingId={meter.building_id}
+            meterNumber={meter.meter_number}
+            currentFlatId={meter.allocations[0]?.flat_id ?? null}
+          />
         )}
       </div>
     </div>

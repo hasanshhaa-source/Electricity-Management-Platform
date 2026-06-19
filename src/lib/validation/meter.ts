@@ -40,6 +40,11 @@ export const allocationsSetSchema = z.object({
   }
 });
 
+export const linkFlatSchema = z.object({
+  flat_id: z.string().uuid('Invalid flat'),
+});
+
+export type LinkFlatInput = z.infer<typeof linkFlatSchema>;
 export type MeterInput = z.infer<typeof meterSchema>;
 export type MeterInputRaw = z.input<typeof meterSchema>;
 export type AllocationInput = z.infer<typeof allocationSchema>;

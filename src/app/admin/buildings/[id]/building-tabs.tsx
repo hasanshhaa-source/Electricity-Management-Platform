@@ -162,7 +162,7 @@ export function BuildingTabs({ building, flats, meters }: BuildingTabsProps) {
                         <TableCell className="text-right">
                           <Button asChild variant="outline" size="sm">
                             <Link href={`/admin/meters/${m.id}`}>
-                              {m.meter_type === 'shared' ? 'Allocations' : 'Manage'}
+                              {m.meter_type === 'shared' ? 'Allocations' : 'Link Flat'}
                             </Link>
                           </Button>
                         </TableCell>
