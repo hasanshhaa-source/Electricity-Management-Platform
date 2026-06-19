@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -165,6 +165,16 @@ export function ReadingsTable({ cycleId, periodYear, periodMonth, cycleStatus, r
   const progress   = totalCount > 0 ? Math.round((savedCount / totalCount) * 100) : 0;
   const hasDirty   = rows.some((r) => rowStates[r.meterId]?.status === 'dirty');
   const isSaving   = rows.some((r) => rowStates[r.meterId]?.status === 'saving');
+
+  useEffect(() => {
+    if (!hasDirty) return;
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasDirty]);
 
   const NEXT_STATUS: Partial<Record<CycleStatus, CycleStatus>> = {
     draft:              'readings_collected',
