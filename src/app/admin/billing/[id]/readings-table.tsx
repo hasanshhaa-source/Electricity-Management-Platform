@@ -411,9 +411,28 @@ export function ReadingsTable({ cycleId, periodYear, periodMonth, cycleStatus, r
       </div>
 
       {isLocked && (
-        <p className="text-sm text-gray-500">
-          Readings are locked for editing in the <strong>{cycleStatus.replace(/_/g, ' ')}</strong> status.
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm text-gray-500">
+            Readings are locked for editing in the <strong>{cycleStatus.replace(/_/g, ' ')}</strong> status.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={advancingStatus}
+            onClick={() => {
+              if (window.confirm(
+                'Reopening will move this cycle back to Draft so readings can be edited. ' +
+                'Any bills already imported or calculated for this cycle will need to be redone afterward. Continue?'
+              )) {
+                advanceStatus('draft');
+              }
+            }}
+          >
+            {advancingStatus ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Reopen for Editing
+          </Button>
+          {statusError && <p className="text-sm text-red-600">{statusError}</p>}
+        </div>
       )}
     </div>
   );
