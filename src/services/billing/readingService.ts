@@ -2,6 +2,10 @@ import { createClient } from '@/lib/supabase/server';
 import type { MeterReading, ApiResponse } from '@/types';
 import type { MeterReadingInput } from '@/lib/validation/billing';
 
+// Loosely typed so either the cookie-bound server client or the
+// service-role admin client (used by the no-login field reading link) can be passed in.
+type SupabaseLike = ReturnType<typeof createClient> extends Promise<infer T> ? T : never;
+
 export interface MeterReadingRow {
   meterId:     string;
   meterNumber: string;
@@ -42,8 +46,9 @@ export async function getReadingRowsForCycle(
   periodYear: number,
   periodMonth: number,
   cycleId: string,
+  client?: SupabaseLike,
 ): Promise<ApiResponse<MeterReadingRow[]>> {
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
 
   // 1. Meters for building
   const { data: meters, error: metersErr } = await supabase
@@ -158,8 +163,9 @@ export async function getReadingRowsForCycle(
 export async function upsertReading(
   input: MeterReadingInput,
   adminId: string,
+  client?: SupabaseLike,
 ): Promise<ApiResponse<MeterReading>> {
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
 
   // Retrieve previous reading to validate
   const { year: prevYear, month: prevMonth } = prevPeriod(input.billing_period_year, input.billing_period_month);

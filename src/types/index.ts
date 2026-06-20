@@ -207,6 +207,10 @@ export interface BillingCycle {
   closed_at: string | null;
   closed_by: string | null;
   notes: string | null;
+  field_token: string | null;
+  field_token_enabled: boolean;
+  field_token_created_by: string | null;
+  field_token_created_at: string | null;
   created_at: string;
   updated_at: string;
 }

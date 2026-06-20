@@ -13,6 +13,7 @@ import { ChevronLeft, Building2, Calendar, CheckCircle2, Circle } from 'lucide-r
 import { ReadingsTable } from './readings-table';
 import { CompanyBillsSection } from './company-bills-section';
 import { CalculationPreview } from './calculation-preview';
+import { FieldLinkControl } from '@/components/field/field-link-control';
 import type { CycleStatus } from '@/types';
 
 type Props = { params: Promise<{ id: string }> };
@@ -147,7 +148,12 @@ export default async function BillingCyclePage({ params }: Props) {
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <FieldLinkControl
+            cycleId={id}
+            initialEnabled={cycle.field_token_enabled}
+            initialToken={cycle.field_token}
+          />
           <ReadingsTable
             cycleId={id}
             buildingId={cycle.building_id}

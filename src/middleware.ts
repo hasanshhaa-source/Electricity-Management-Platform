@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-const PUBLIC_ROUTES = ['/login', '/register', '/unauthorized'];
+const PUBLIC_ROUTES = ['/login', '/register', '/unauthorized', '/field', '/api/field'];
 const ADMIN_ROUTES = ['/admin'];
 const TENANT_ROUTES = ['/tenant'];
 
