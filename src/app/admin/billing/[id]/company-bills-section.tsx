@@ -291,16 +291,6 @@ export function CompanyBillsSection({
               </FormField>
             </div>
 
-            <FormField label="Attachment URL" htmlFor="image_url" error={errors.image_url?.message}>
-              <div className="space-y-1">
-                <Input id="image_url" placeholder="https://… (file upload coming soon)" {...register('image_url')} />
-                <p className="text-xs text-gray-400 flex items-center gap-1">
-                  <Paperclip className="h-3 w-3" />
-                  Paste a direct URL to the scanned bill. Native file upload will be available in a future release.
-                </p>
-              </div>
-            </FormField>
-
             <FormField label="Notes" htmlFor="notes" error={errors.notes?.message}>
               <Textarea id="notes" rows={2} placeholder="Optional notes…" {...register('notes')} />
             </FormField>
