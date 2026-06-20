@@ -7,9 +7,16 @@
  *   + difference_adjustment + previous_unpaid_balance
  */
 
+import { runFormula, FormulaError } from '@/lib/billing/formulaEngine';
+
 // ─── Input / Output types ─────────────────────────────────────────────────────
 
 export type DiffDistributionMethod = 'proportional' | 'equal';
+
+export interface FlatFormula {
+  flatId:      string;
+  formulaText: string;
+}
 
 export interface ReadingInput {
   meterId:       string;
@@ -39,6 +46,12 @@ export interface CalculationInput {
   dueDate:                   string;   // YYYY-MM-DD
   periodYear:                number;
   periodMonth:               number;
+  /** Active custom formulas keyed by flatId — optional, defaults to no overrides. */
+  formulas?:                 Map<string, FlatFormula>;
+  /** flatId → flatNumber, used to resolve ALLOCATE('flatNumber') targets in formulas. */
+  flatNumbers?:              Record<string, string>;
+  /** Flats excluded from the difference/residual distribution step. */
+  excludedFromResidual?:     Set<string>;
 }
 
 export interface MeterContribution {
@@ -64,6 +77,9 @@ export interface FlatBillResult {
   totalDue:             number;         // baseBill + adjustment + previousBalance
   contributions:        MeterContribution[];
   calculationLog:       FlatBillCalcLog;
+  excludedFromResidual: boolean;
+  formulaApplied:       string | null;  // formula text, if one was used for this flat
+  formulaError:         string | null;  // set if the formula failed and the default was used instead
 }
 
 export interface FlatBillCalcLog {
@@ -177,6 +193,84 @@ export function calcBaseBills(
   return bills;
 }
 
+export interface FormulaApplicationResult {
+  baseBills:      Map<string, number>;
+  appliedFormula: Map<string, string>;   // flatId → formula text that was successfully applied
+  formulaErrors:  Map<string, string>;   // flatId → error message, if its formula failed
+}
+
+/**
+ * Step 4b — Apply any active custom formulas, overriding the default base bill
+ * for the flats they're attached to. A formula may also redirect amounts to
+ * other flats via ALLOCATE(amount, 'flatNumber'). If a formula throws, that
+ * flat silently falls back to its default base bill and the error is recorded.
+ */
+export function applyFormulas(
+  baseBillsIn:       Map<string, number>,
+  flatConsumptions:  Map<string, { totalConsumption: number; contributions: MeterContribution[] }>,
+  activeTenancies:   ActiveTenancy[],
+  costPerUnit:       number,
+  previousBalances:  Record<string, number>,
+  totalBuildingCost: number,
+  totalBuildingConsumption: number,
+  formulas:          Map<string, FlatFormula>,
+  flatNumbers:       Record<string, string>,
+): FormulaApplicationResult {
+  const baseBills      = new Map(baseBillsIn);
+  const appliedFormula = new Map<string, string>();
+  const formulaErrors  = new Map<string, string>();
+
+  if (formulas.size === 0) return { baseBills, appliedFormula, formulaErrors };
+
+  const flatNumberToId = new Map(Object.entries(flatNumbers).map(([id, num]) => [num, id]));
+
+  for (const tenancy of activeTenancies) {
+    const formula = formulas.get(tenancy.flatId);
+    if (!formula) continue;
+
+    const otherFlats: Record<string, number[]> = { consumption: [], base_bill: [] };
+    for (const other of activeTenancies) {
+      if (other.flatId === tenancy.flatId) continue;
+      otherFlats.consumption.push(flatConsumptions.get(other.flatId)?.totalConsumption ?? 0);
+      otherFlats.base_bill.push(baseBillsIn.get(other.flatId) ?? 0);
+    }
+
+    const consumption = flatConsumptions.get(tenancy.flatId)?.totalConsumption ?? 0;
+    const primary      = flatConsumptions.get(tenancy.flatId)?.contributions[0];
+
+    try {
+      const { value, allocations } = runFormula(formula.formulaText, {
+        variables: {
+          consumption,
+          previous_reading:        primary?.openingReading ?? 0,
+          current_reading:         primary?.closingReading ?? 0,
+          rate_per_unit:           costPerUnit,
+          base_bill:               baseBillsIn.get(tenancy.flatId) ?? 0,
+          previous_balance:        previousBalances[tenancy.flatId] ?? 0,
+          total_building_cost:     totalBuildingCost,
+          total_building_consumption: totalBuildingConsumption,
+        },
+        otherFlats,
+        resolveTarget: (flatNumber) => {
+          const id = flatNumberToId.get(flatNumber);
+          if (!id) throw new FormulaError(`Unknown flat number '${flatNumber}'`);
+          return id;
+        },
+      });
+
+      baseBills.set(tenancy.flatId, round(value, 2));
+      for (const alloc of allocations) {
+        baseBills.set(alloc.target, round((baseBills.get(alloc.target) ?? 0) + alloc.amount, 2));
+      }
+      appliedFormula.set(tenancy.flatId, formula.formulaText);
+    } catch (err) {
+      formulaErrors.set(tenancy.flatId, (err as Error).message);
+    }
+  }
+
+  return { baseBills, appliedFormula, formulaErrors };
+}
+
 /**
  * Step 5 — Distribute the difference (total building cost − sum of base bills) across flats.
  *
@@ -186,10 +280,16 @@ export function calcBaseBills(
 export function distributeDifference(
   difference: number,
   flatConsumptions: Map<string, { totalConsumption: number; contributions: MeterContribution[] }>,
-  activeFlatIds: string[],
+  allFlatIds: string[],
   method: DiffDistributionMethod,
+  excludedFlatIds: Set<string> = new Set(),
 ): Map<string, number> {
   const adjustments = new Map<string, number>();
+  for (const fid of excludedFlatIds) {
+    if (allFlatIds.includes(fid)) adjustments.set(fid, 0);
+  }
+
+  const activeFlatIds = allFlatIds.filter((fid) => !excludedFlatIds.has(fid));
   if (activeFlatIds.length === 0) return adjustments;
 
   const diff2 = round(difference, 2);
@@ -214,7 +314,7 @@ export function distributeDifference(
 
   if (totalConsumption <= 0) {
     // Fall back to equal distribution when all consumptions are 0
-    return distributeDifference(difference, flatConsumptions, activeFlatIds, 'equal');
+    return distributeDifference(difference, flatConsumptions, allFlatIds, 'equal', excludedFlatIds);
   }
 
   let allocated = 0;
@@ -250,6 +350,9 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     totalBuildingConsumption,
     previousBalances,
     diffMethod,
+    formulas             = new Map<string, FlatFormula>(),
+    flatNumbers          = {},
+    excludedFromResidual = new Set<string>(),
   } = input;
 
   if (activeTenancies.length === 0) {
@@ -289,7 +392,18 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
   const costPerUnit = calcCostPerUnit(totalBuildingCost, totalBuildingConsumption);
 
   // Step 4: base bills
-  const baseBills = calcBaseBills(flatConsumptions, activeTenancies, costPerUnit);
+  const defaultBaseBills = calcBaseBills(flatConsumptions, activeTenancies, costPerUnit);
+
+  // Step 4b: apply any active custom formulas
+  const { baseBills, appliedFormula, formulaErrors } = applyFormulas(
+    defaultBaseBills, flatConsumptions, activeTenancies, costPerUnit,
+    previousBalances, totalBuildingCost, totalBuildingConsumption,
+    formulas, flatNumbers,
+  );
+
+  for (const [flatId, msg] of formulaErrors) {
+    warnings.push(`Formula for flat ${flatNumbers[flatId] ?? flatId} failed (${msg}) — used default calculation instead.`);
+  }
 
   // Step 5: sum and difference
   let sumOfBaseBills = 0;
@@ -298,7 +412,7 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
 
   // Step 6: distribute difference
   const activeFlatIds = activeTenancies.map((t) => t.flatId);
-  const adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod);
+  const adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod, excludedFromResidual);
 
   // Step 7: assemble final bill results
   const flatBills: FlatBillResult[] = [];
@@ -349,6 +463,9 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
       totalDue,
       contributions,
       calculationLog: calcLog,
+      excludedFromResidual: excludedFromResidual.has(flatId),
+      formulaApplied:       appliedFormula.get(flatId) ?? null,
+      formulaError:         formulaErrors.get(flatId) ?? null,
     });
 
     totalCalculatedDue = round(totalCalculatedDue + totalDue, 2);

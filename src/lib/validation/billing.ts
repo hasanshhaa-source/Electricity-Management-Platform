@@ -61,6 +61,15 @@ export type PaymentInputRaw = z.input<typeof paymentSchema>;
 export type CompanyBillInput    = z.infer<typeof companyBillSchema>;
 export type CompanyBillInputRaw = z.input<typeof companyBillSchema>;
 
+export const flatBillFormulaSchema = z.object({
+  flat_id:      z.string().uuid('Invalid flat'),
+  meter_id:     z.string().uuid('Invalid meter').optional().nullable(),
+  cycle_id:     z.string().uuid('Invalid cycle').optional().nullable(),  // null = persistent, applies to every future cycle
+  formula_text: z.string().min(1, 'Formula is required').max(2000),
+});
+
+export type FlatBillFormulaInput = z.infer<typeof flatBillFormulaSchema>;
+
 export type CycleInput       = z.infer<typeof cycleSchema>;
 export type CycleStatusInput = z.infer<typeof cycleStatusSchema>;
 export type MeterReadingInput = z.infer<typeof meterReadingSchema>;

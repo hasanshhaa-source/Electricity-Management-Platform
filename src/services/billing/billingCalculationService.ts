@@ -9,7 +9,9 @@ import {
   type CalculationInput,
   type CalculationResult,
   type DiffDistributionMethod,
+  type FlatFormula,
 } from './calculationEngine';
+import { getActiveFormulasForCycle } from './formulaService';
 
 // ─── Types returned to the UI ─────────────────────────────────────────────────
 
@@ -28,6 +30,8 @@ export interface FlatBillPreview {
   status:               string;
   version:              number;
   calculationLog:       Record<string, unknown>;
+  excludedFromResidual: boolean;
+  formulaApplied:       string | null;
 }
 
 // ─── Gather inputs from DB ────────────────────────────────────────────────────
@@ -145,6 +149,25 @@ async function gatherCalculationInputs(
   const totalBuildingCost        = (companyBills ?? []).reduce((s: number, b: any) => s + Number(b.total_amount),  0);
   const totalBuildingConsumption = (companyBills ?? []).reduce((s: number, b: any) => s + Number(b.total_units ?? 0), 0);
 
+  // 8. Custom formulas active for this cycle (cycle-specific takes priority over persistent)
+  const formulas: Map<string, FlatFormula> = await getActiveFormulasForCycle(buildingId, cycleId);
+
+  // 9. Flat numbers (used to resolve ALLOCATE('flatNumber') targets in formulas)
+  const { data: allFlats } = await supabase.from('flats').select('id, flat_number').eq('building_id', buildingId);
+  const flatNumbers: Record<string, string> = {};
+  for (const f of allFlats ?? []) flatNumbers[f.id] = f.flat_number;
+
+  // 10. Flats currently excluded from the residual distribution (carried over from the prior calculation, if any)
+  const excludedFromResidual = new Set<string>();
+  const { data: existingBills } = await supabase
+    .from('flat_bills')
+    .select('flat_id, excluded_from_residual')
+    .eq('billing_cycle_id', cycleId)
+    .eq('is_current_version', true);
+  for (const b of existingBills ?? []) {
+    if (b.excluded_from_residual) excludedFromResidual.add(b.flat_id);
+  }
+
   return {
     readings,
     assignments: (assignments ?? []).map((a: any) => ({
@@ -160,6 +183,9 @@ async function gatherCalculationInputs(
     dueDate,
     periodYear,
     periodMonth,
+    formulas,
+    flatNumbers,
+    excludedFromResidual,
   };
 }
 
@@ -221,11 +247,14 @@ async function persistDraftBills(
     amount_paid:           0,
     status:                'draft',
     due_date:              dueDate,
+    excluded_from_residual: bill.excludedFromResidual,
     calculation_log:       {
       ...bill.calculationLog,
-      calculatedAt: now,
-      calculatedBy: adminId,
-      flatNumber:   flatNumberMap.get(bill.flatId) ?? bill.flatId,
+      calculatedAt:   now,
+      calculatedBy:   adminId,
+      flatNumber:     flatNumberMap.get(bill.flatId) ?? bill.flatId,
+      formulaApplied: bill.formulaApplied,
+      formulaError:   bill.formulaError,
     },
     calculated_by:  adminId,
     calculated_at:  now,
@@ -331,6 +360,8 @@ export async function calculateForCycle(
       status:               'draft',
       version:              persisted?.version ?? 1,
       calculationLog:       bill.calculationLog as any,
+      excludedFromResidual: bill.excludedFromResidual,
+      formulaApplied:       bill.formulaApplied,
     };
   });
 
@@ -345,6 +376,7 @@ export async function getBillsForCycle(cycleId: string): Promise<ApiResponse<Fla
       id, flat_id, tenancy_id, version, status,
       units_consumed, rate_per_unit, current_charges,
       difference_adjustment, previous_balance, total_due, calculation_log,
+      excluded_from_residual,
       flat:flats(flat_number),
       tenancy:tenancies(user:users!user_id(full_name))
     `)
@@ -369,9 +401,24 @@ export async function getBillsForCycle(cycleId: string): Promise<ApiResponse<Fla
     status:               b.status,
     version:              b.version,
     calculationLog:       b.calculation_log ?? {},
+    excludedFromResidual: b.excluded_from_residual ?? false,
+    formulaApplied:       (b.calculation_log as any)?.formulaApplied ?? null,
   }));
 
   return { data: bills, error: null };
+}
+
+/** Toggles whether a flat is excluded from the residual/difference distribution. Takes effect on the next (re)calculation. */
+export async function setBillResidualExclusion(billId: string, excluded: boolean): Promise<ApiResponse<null>> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from('flat_bills')
+    .update({ excluded_from_residual: excluded })
+    .eq('id', billId)
+    .eq('is_current_version', true);
+
+  if (error) return { data: null, error: error.message };
+  return { data: null, error: null };
 }
 
 export async function issueBillsForCycle(
