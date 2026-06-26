@@ -274,6 +274,19 @@ export function CalculationPreview({
                         <pre className="text-xs text-gray-600 whitespace-pre-wrap font-mono leading-relaxed">
                           {(bill.calculationLog as any)?.explanation ?? 'No explanation available'}
                         </pre>
+                        {bill.lumpSumCharges > 0 && (
+                          <p className="text-xs text-purple-600 mt-2">Lump-sum charge: +{fmt(bill.lumpSumCharges)} {currency}</p>
+                        )}
+                        {((bill.calculationLog as any)?.billGroups as { groupKey: string; cost: number; consumption: number; rate: number }[] | undefined)?.length ? (
+                          <div className="mt-2 text-xs text-gray-600">
+                            <p className="font-medium text-gray-500">Priced against {((bill.calculationLog as any).billGroups as any[]).length} bill(s):</p>
+                            <ul className="list-disc list-inside">
+                              {((bill.calculationLog as any).billGroups as { groupKey: string; cost: number; consumption: number; rate: number }[]).map((g) => (
+                                <li key={g.groupKey}>Bill {g.groupKey}: rate {fmt(g.rate, 4)} {currency}/kWh (cost {fmt(g.cost)}, consumption {fmt(g.consumption, 0)} kWh)</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                         {bill.formulaApplied && (
                           <p className="text-xs text-blue-600 mt-2">Custom formula applied: <code>{bill.formulaApplied}</code></p>
                         )}

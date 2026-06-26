@@ -15,8 +15,13 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Pencil, Trash2, Receipt, Zap, TrendingUp, Hash, Paperclip } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Plus, Pencil, Trash2, Receipt, Zap, TrendingUp, Hash, Paperclip, Link2 } from 'lucide-react';
 import type { ElectricityCompanyBill, CycleStatus } from '@/types';
+import type { BillLink } from '@/services/billing/companyBillService';
+
+interface MeterOption { id: string; meter_number: string }
+interface FlatOption { id: string; flat_number: string }
 
 interface CompanyBillsSectionProps {
   cycleId:      string;
@@ -26,6 +31,9 @@ interface CompanyBillsSectionProps {
   currency:     string;
   cycleStatus:  CycleStatus;
   initialBills: ElectricityCompanyBill[];
+  meters:       MeterOption[];
+  flats:        FlatOption[];
+  initialLinks: BillLink[];
 }
 
 const MONTH_NAMES = [
@@ -39,16 +47,68 @@ function fmt(n: number, decimals = 2) {
 
 export function CompanyBillsSection({
   cycleId, buildingId, periodYear, periodMonth,
-  currency, cycleStatus, initialBills,
+  currency, cycleStatus, initialBills, meters, flats, initialLinks,
 }: CompanyBillsSectionProps) {
   const router = useRouter();
   const [bills, setBills]           = useState<ElectricityCompanyBill[]>(initialBills);
+  const [links, setLinks]           = useState<BillLink[]>(initialLinks);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editBill, setEditBill]     = useState<ElectricityCompanyBill | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ElectricityCompanyBill | null>(null);
   const [deleting, setDeleting]     = useState(false);
   const [serverError, setServerError] = useState('');
   const [saving, setSaving]         = useState(false);
+
+  const [linkTarget, setLinkTarget]   = useState<ElectricityCompanyBill | null>(null);
+  const [linkFlatId, setLinkFlatId]   = useState<string | null>(null);
+  const [linkMeterIds, setLinkMeterIds] = useState<string[]>([]);
+  const [linkSaving, setLinkSaving]   = useState(false);
+  const [linkError, setLinkError]     = useState('');
+
+  const linkByBillId = new Map(links.map((l) => [l.billId, l]));
+
+  function openLink(bill: ElectricityCompanyBill) {
+    const existing = linkByBillId.get(bill.id);
+    setLinkTarget(bill);
+    setLinkFlatId(existing?.flatId ?? null);
+    setLinkMeterIds(existing?.meterIds ?? []);
+    setLinkError('');
+  }
+
+  async function saveLink() {
+    if (!linkTarget) return;
+    setLinkSaving(true);
+    setLinkError('');
+
+    const body = linkFlatId
+      ? { flat_id: linkFlatId, meter_ids: [] }
+      : { flat_id: null, meter_ids: linkMeterIds };
+
+    const res  = await fetch(`/api/billing/company-bills/${linkTarget.id}/links`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+
+    if (!res.ok || json.error) {
+      setLinkError(json.error ?? 'Failed to save link');
+      setLinkSaving(false);
+      return;
+    }
+
+    setLinks((prev) => [
+      ...prev.filter((l) => l.billId !== linkTarget.id),
+      { billId: linkTarget.id, flatId: linkFlatId, meterIds: linkFlatId ? [] : linkMeterIds },
+    ]);
+    setLinkTarget(null);
+    setLinkSaving(false);
+    router.refresh();
+  }
+
+  function toggleMeter(meterId: string) {
+    setLinkMeterIds((prev) => prev.includes(meterId) ? prev.filter((m) => m !== meterId) : [...prev, meterId]);
+  }
 
   const isLocked = !['draft', 'readings_collected', 'bills_imported'].includes(cycleStatus);
 
@@ -192,6 +252,7 @@ export function CompanyBillsSection({
                 <TableHead>Due Date</TableHead>
                 <TableHead>Attachment</TableHead>
                 <TableHead>Notes</TableHead>
+                <TableHead>Linked To</TableHead>
                 {!isLocked && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
@@ -214,8 +275,24 @@ export function CompanyBillsSection({
                       : <span className="text-gray-300 text-xs">—</span>}
                   </TableCell>
                   <TableCell className="text-sm text-gray-500 max-w-[160px] truncate">{bill.notes ?? '—'}</TableCell>
+                  <TableCell className="text-sm">
+                    {(() => {
+                      const link = linkByBillId.get(bill.id);
+                      if (link?.flatId) {
+                        const flat = flats.find((f) => f.id === link.flatId);
+                        return <Badge variant="secondary">Flat {flat?.flat_number ?? link.flatId}</Badge>;
+                      }
+                      if (link?.meterIds.length) {
+                        return <Badge variant="success">{link.meterIds.length} meter{link.meterIds.length !== 1 ? 's' : ''}</Badge>;
+                      }
+                      return <Badge variant="destructive">Unlinked</Badge>;
+                    })()}
+                  </TableCell>
                   {!isLocked && (
                     <TableCell className="text-right space-x-1">
+                      <Button size="sm" variant="outline" onClick={() => openLink(bill)}>
+                        <Link2 className="h-3 w-3" />
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => openEdit(bill)}>
                         <Pencil className="h-3 w-3" />
                       </Button>
@@ -233,7 +310,7 @@ export function CompanyBillsSection({
                   <TableCell colSpan={2} className="text-sm text-gray-600">Total ({bills.length} bills)</TableCell>
                   <TableCell className="text-right">{fmt(summary.totalAmount)}</TableCell>
                   <TableCell className="text-right">{fmt(summary.totalUnits, 0)}</TableCell>
-                  <TableCell colSpan={isLocked ? 4 : 5} />
+                  <TableCell colSpan={isLocked ? 5 : 6} />
                 </TableRow>
               )}
             </TableBody>
@@ -315,6 +392,68 @@ export function CompanyBillsSection({
         loading={deleting}
         onConfirm={confirmDelete}
       />
+
+      {/* Link bill to meters/flat */}
+      <Dialog open={!!linkTarget} onOpenChange={(o) => { if (!o) setLinkTarget(null); }}>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Link Bill {linkTarget?.bill_number}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            {linkError && (
+              <Alert variant="destructive">
+                <AlertDescription>{linkError}</AlertDescription>
+              </Alert>
+            )}
+
+            <FormField label="Bill to flat as lump sum (skips meter consumption)" htmlFor="link_flat">
+              <Select
+                value={linkFlatId ?? '__none__'}
+                onValueChange={(v) => setLinkFlatId(v === '__none__' ? null : v)}
+              >
+                <SelectTrigger id="link_flat">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Not billed to a flat</SelectItem>
+                  {flats.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>Flat {f.flat_number}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+
+            {!linkFlatId && (
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-gray-700">Linked Meters</p>
+                <p className="text-xs text-gray-500">Select every meter this bill's amount and consumption cover.</p>
+                <div className="max-h-56 overflow-y-auto rounded-md border border-gray-200 divide-y">
+                  {meters.length === 0 && (
+                    <p className="text-sm text-gray-400 p-3">No meters in this building.</p>
+                  )}
+                  {meters.map((m) => (
+                    <label key={m.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={linkMeterIds.includes(m.id)}
+                        onChange={() => toggleMeter(m.id)}
+                      />
+                      {m.meter_number}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button type="button" loading={linkSaving} onClick={saveLink}>
+                {linkSaving ? 'Saving…' : 'Save Link'}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setLinkTarget(null)}>Cancel</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

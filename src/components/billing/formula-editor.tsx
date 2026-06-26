@@ -16,6 +16,7 @@ interface FormulaEditorProps {
   cycleId:        string;
   initialFormula: string;
   initialScope:   'persistent' | 'one-off';
+  initialTarget?: 'base_bill' | 'consumption';
   onSaved:        () => void;
 }
 
@@ -25,11 +26,12 @@ const VARIABLES = [
 ];
 
 export function FormulaEditor({
-  open, onOpenChange, flatId, flatNumber, cycleId, initialFormula, initialScope, onSaved,
+  open, onOpenChange, flatId, flatNumber, cycleId, initialFormula, initialScope, initialTarget, onSaved,
 }: FormulaEditorProps) {
   const router = useRouter();
   const [text, setText]       = useState(initialFormula);
   const [scope, setScope]     = useState(initialScope);
+  const [target, setTarget]   = useState<'base_bill' | 'consumption'>(initialTarget ?? 'base_bill');
   const [saving, setSaving]   = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError]     = useState('');
@@ -59,9 +61,10 @@ export function FormulaEditor({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          flat_id:      flatId,
-          cycle_id:     scope === 'one-off' ? cycleId : null,
-          formula_text: text,
+          flat_id:        flatId,
+          cycle_id:       scope === 'one-off' ? cycleId : null,
+          formula_text:   text,
+          formula_target: target,
         }),
       });
       const json = await res.json();
@@ -86,9 +89,21 @@ export function FormulaEditor({
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="flex items-center gap-4 text-sm">
+            <label className="flex items-center gap-1.5">
+              <input type="radio" checked={target === 'base_bill'} onChange={() => setTarget('base_bill')} />
+              Override whole base bill
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input type="radio" checked={target === 'consumption'} onChange={() => setTarget('consumption')} />
+              Override consumption only
+            </label>
+          </div>
           <p className="text-xs text-gray-500">
-            Replaces this flat's base bill amount. Use variables, arithmetic, AVG/SUM/MIN/MAX(field) across
-            other flats, IF(cond, a, b), and ALLOCATE(amount, 'flatNumber') to redirect part of the amount to another flat.
+            {target === 'base_bill'
+              ? "The formula's result replaces this flat's final base bill amount directly. Use ALLOCATE(amount, 'flatNumber') to redirect part of it to another flat."
+              : "The formula's result replaces only this flat's consumption value — the normal rate and difference-distribution math still runs on top of it (base_bill = consumption × rate_per_unit). ALLOCATE() is not available in this mode."}
+            {' '}Use variables, arithmetic, and AVG/SUM/MIN/MAX(field) across other flats, IF(cond, a, b).
           </p>
 
           <div className="flex flex-wrap gap-1.5">
@@ -100,7 +115,7 @@ export function FormulaEditor({
           <Textarea
             value={text}
             onChange={(e) => { setText(e.target.value); setCheckResult(null); }}
-            placeholder="e.g. AVG(consumption) * rate_per_unit"
+            placeholder={target === 'consumption' ? 'e.g. AVG(consumption)' : 'e.g. AVG(consumption) * rate_per_unit'}
             rows={4}
             className="font-mono text-sm"
           />
