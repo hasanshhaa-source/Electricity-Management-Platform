@@ -70,6 +70,15 @@ export interface CalculationInput {
    * consumption math and the difference/residual distribution entirely.
    */
   lumpSumCharges?:           Record<string, number>;
+  /** meterId → meterNumber, used to resolve METER('meterNumber').field lookups in formulas. */
+  meterNumbers?:             Record<string, string>;
+  /**
+   * Pre-formula default values for each company bill, keyed by its natural bill_number,
+   * used to resolve BILL('billNumber').field lookups in formulas. Built once by the
+   * caller from the same company-bill data used to derive totalBuildingCost/billGroups —
+   * this module does no DB access, so it never fetches bill data itself.
+   */
+  billDefaults?:             Record<string, { total_amount: number; total_units: number; rate: number }>;
 }
 
 export interface BillGroupInput {
@@ -249,6 +258,8 @@ export function applyFormulas(
   totalBuildingConsumption: number,
   formulas:          Map<string, FlatFormula>,
   flatNumbers:       Record<string, string>,
+  meterNumbers:      Record<string, string> = {},
+  billDefaults:      Record<string, { total_amount: number; total_units: number; rate: number }> = {},
 ): FormulaApplicationResult {
   const baseBills           = new Map(baseBillsIn);
   const appliedFormula      = new Map<string, string>();
@@ -258,6 +269,50 @@ export function applyFormulas(
   if (formulas.size === 0) return { baseBills, appliedFormula, formulaErrors, consumptionOverrides };
 
   const flatNumberToId = new Map(Object.entries(flatNumbers).map(([id, num]) => [num, id]));
+
+  // ── Lookup snapshots for FLAT()/METER()/BILL() — built once, from the same
+  // pre-formula defaults already in scope, read-only across all flats' evaluations.
+  const flatDefaultsByNumber = new Map<string, { consumption: number; base_bill: number; previous_balance: number; rate_per_unit: number }>();
+  for (const [flatId, flatNumber] of Object.entries(flatNumbers)) {
+    flatDefaultsByNumber.set(flatNumber, {
+      consumption:      flatConsumptions.get(flatId)?.totalConsumption ?? 0,
+      base_bill:        baseBillsIn.get(flatId) ?? 0,
+      previous_balance: previousBalances[flatId] ?? 0,
+      rate_per_unit:    ratePerUnitByFlat.get(flatId) ?? 0,
+    });
+  }
+
+  const meterDefaultsByNumber = new Map<string, { consumption: number }>();
+  for (const flatId of flatConsumptions.keys()) {
+    const contributions = flatConsumptions.get(flatId)?.contributions ?? [];
+    for (const c of contributions) {
+      const meterNumber = meterNumbers[c.meterId];
+      if (!meterNumber) continue;
+      const existing = meterDefaultsByNumber.get(meterNumber);
+      meterDefaultsByNumber.set(meterNumber, { consumption: (existing?.consumption ?? 0) + c.meterConsumption });
+    }
+  }
+
+  const lookupFlat = (flatNumber: string, field: string): number => {
+    const data = flatDefaultsByNumber.get(flatNumber);
+    if (!data) throw new FormulaError(`Unknown flat number '${flatNumber}'`);
+    if (!(field in data)) throw new FormulaError(`Unknown field '${field}' for FLAT('${flatNumber}')`);
+    return (data as Record<string, number>)[field];
+  };
+
+  const lookupMeter = (meterNumber: string, field: string): number => {
+    const data = meterDefaultsByNumber.get(meterNumber);
+    if (!data) throw new FormulaError(`Unknown meter number '${meterNumber}'`);
+    if (!(field in data)) throw new FormulaError(`Unknown field '${field}' for METER('${meterNumber}')`);
+    return (data as Record<string, number>)[field];
+  };
+
+  const lookupBill = (billNumber: string, field: string): number => {
+    const data = billDefaults[billNumber];
+    if (!data) throw new FormulaError(`Unknown bill number '${billNumber}'`);
+    if (!(field in data)) throw new FormulaError(`Unknown field '${field}' for BILL('${billNumber}')`);
+    return (data as Record<string, number>)[field];
+  };
 
   for (const tenancy of activeTenancies) {
     const formula = formulas.get(tenancy.flatId);
@@ -293,6 +348,9 @@ export function applyFormulas(
           if (!id) throw new FormulaError(`Unknown flat number '${flatNumber}'`);
           return id;
         },
+        lookupFlat,
+        lookupMeter,
+        lookupBill,
       });
 
       if (target === 'consumption') {
@@ -403,6 +461,8 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     excludedFromResidual = new Set<string>(),
     billGroups           = [] as BillGroupInput[],
     lumpSumCharges       = {} as Record<string, number>,
+    meterNumbers         = {} as Record<string, string>,
+    billDefaults         = {} as Record<string, { total_amount: number; total_units: number; rate: number }>,
   } = input;
 
   if (activeTenancies.length === 0) {
@@ -517,7 +577,7 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
   const { baseBills, appliedFormula, formulaErrors, consumptionOverrides } = applyFormulas(
     defaultBaseBills, flatConsumptions, activeTenancies, ratePerUnitByFlat,
     previousBalances, reconciledCost, reconciledConsumption,
-    formulas, flatNumbers,
+    formulas, flatNumbers, meterNumbers, billDefaults,
   );
 
   for (const [flatId, msg] of formulaErrors) {

@@ -52,12 +52,14 @@ async function gatherCalculationInputs(
   // 1. Active meters for building
   const { data: meters } = await supabase
     .from('meters')
-    .select('id')
+    .select('id, meter_number')
     .eq('building_id', buildingId)
     .eq('is_active', true)
     .is('deleted_at', null);
 
   const meterIds = (meters ?? []).map((m: any) => m.id);
+  const meterNumbers: Record<string, string> = {};
+  for (const m of meters ?? []) meterNumbers[m.id] = m.meter_number;
 
   // 2. Active flat_meter_assignments
   const { data: assignments } = await supabase
@@ -150,6 +152,18 @@ async function gatherCalculationInputs(
     .eq('period_month', periodMonth);
 
   const bills = companyBills ?? [];
+
+  // Pre-formula defaults snapshot for BILL('billNumber').field lookups in formulas.
+  const billDefaults: Record<string, { total_amount: number; total_units: number; rate: number }> = {};
+  for (const b of bills) {
+    const totalAmount = Number(b.total_amount);
+    const totalUnits  = Number(b.total_units ?? 0);
+    billDefaults[b.bill_number] = {
+      total_amount: totalAmount,
+      total_units:  totalUnits,
+      rate:         totalUnits > 0 ? totalAmount / totalUnits : 0,
+    };
+  }
   const links = await getBillLinksForCycle(buildingId, periodYear, periodMonth);
   const linkedById = new Map(links.map((l) => [l.billId, l]));
   const anyLinked   = links.some((l) => l.meterIds.length > 0 || l.flatId);
@@ -229,6 +243,8 @@ async function gatherCalculationInputs(
     excludedFromResidual,
     billGroups,
     lumpSumCharges,
+    meterNumbers,
+    billDefaults,
   };
 }
 

@@ -82,4 +82,40 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
     expect(flatC.differenceAdjustment).toBe(0);
     expect(flatC.excludedFromResidual).toBe(true);
   });
+
+  it('resolves FLAT(x).field lookups end-to-end in legacy (pooled) mode', () => {
+    const formulas = new Map<string, FlatFormula>([
+      [FLAT_C, { flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }],
+    ]);
+    const result = runBillingCalculation(
+      makeInput({ formulas, flatNumbers: { [FLAT_A]: 'A', [FLAT_B]: 'B', [FLAT_C]: 'C' } }),
+    );
+    const flatC = result.flatBills.find((b) => b.flatId === FLAT_C)!;
+    // default base bill for A is 100 (consumption 100 * rate 1) → 100 + 10 = 110
+    expect(flatC.baseBill).toBe(110);
+    expect(flatC.formulaApplied).toBe("FLAT('A').base_bill + 10");
+  });
+
+  it('resolves FLAT(x).field lookups end-to-end in grouped (billGroups) mode', () => {
+    const formulas = new Map<string, FlatFormula>([
+      [FLAT_C, { flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }],
+    ]);
+    const billGroups = [
+      { groupKey: 'g1', totalCost: 200, totalConsumption: 200, meterIds: ['m1', 'm2'] },
+      { groupKey: 'g2', totalCost: 100, totalConsumption: 100, meterIds: ['m3'] },
+    ];
+    const result = runBillingCalculation(
+      makeInput({
+        formulas,
+        flatNumbers: { [FLAT_A]: 'A', [FLAT_B]: 'B', [FLAT_C]: 'C' },
+        billGroups,
+      }),
+    );
+    const flatA = result.flatBills.find((b) => b.flatId === FLAT_A)!;
+    const flatC = result.flatBills.find((b) => b.flatId === FLAT_C)!;
+    // group g1 rate = 200/200 = 1, flat A consumption 100 → default base bill 100
+    expect(flatA.baseBill).toBe(100);
+    expect(flatC.baseBill).toBe(110);
+    expect(flatC.formulaApplied).toBe("FLAT('A').base_bill + 10");
+  });
 });

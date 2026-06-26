@@ -8,13 +8,16 @@
  *   AVG(field) / SUM(field) / MIN(field) / MAX(field)  — aggregate `field` across other flats
  *   IF(condition, thenExpr, elseExpr)
  *   ALLOCATE(amount, 'flatNumber')  — redirects `amount` to another flat instead of the caller's own flat
+ *   FLAT('flatNumber').field / METER('meterNumber').field / BILL('billNumber').field
+ *     — read another flat/meter/bill's PRE-FORMULA default values by natural identifier.
+ *     Must always be followed by a `.field` member access; calling these without one is an error.
  */
 
 export class FormulaError extends Error {}
 
 // ─── Tokenizer ─────────────────────────────────────────────────────────────────
 
-type TokenType = 'NUMBER' | 'STRING' | 'IDENT' | 'OP' | 'LPAREN' | 'RPAREN' | 'COMMA' | 'EOF';
+type TokenType = 'NUMBER' | 'STRING' | 'IDENT' | 'OP' | 'LPAREN' | 'RPAREN' | 'COMMA' | 'DOT' | 'EOF';
 
 interface Token {
   type:  TokenType;
@@ -33,6 +36,7 @@ function tokenize(input: string): Token[] {
     if (c === '(') { tokens.push({ type: 'LPAREN', value: c }); i++; continue; }
     if (c === ')') { tokens.push({ type: 'RPAREN', value: c }); i++; continue; }
     if (c === ',') { tokens.push({ type: 'COMMA', value: c }); i++; continue; }
+    if (c === '.' && !/[0-9]/.test(input[i + 1] ?? '')) { tokens.push({ type: 'DOT', value: c }); i++; continue; }
 
     if (c === "'" || c === '"') {
       const quote = c;
@@ -79,7 +83,8 @@ type Node =
   | { kind: 'ident'; name: string }
   | { kind: 'binop'; op: string; left: Node; right: Node }
   | { kind: 'unary'; op: string; operand: Node }
-  | { kind: 'call'; name: string; args: Node[] };
+  | { kind: 'call'; name: string; args: Node[] }
+  | { kind: 'member'; object: Node; field: string };
 
 class Parser {
   private pos = 0;
@@ -135,7 +140,18 @@ class Parser {
       this.next();
       return { kind: 'unary', op: '-', operand: this.parseUnary() };
     }
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+
+  /** Parses a primary expression, then consumes any trailing `.field` member accesses. */
+  private parsePostfix(): Node {
+    let node = this.parsePrimary();
+    while (this.peek().type === 'DOT') {
+      this.next();
+      const fieldTok = this.expect('IDENT');
+      node = { kind: 'member', object: node, field: fieldTok.value };
+    }
+    return node;
   }
 
   private parsePrimary(): Node {
@@ -189,6 +205,16 @@ export interface FormulaContext {
   otherFlats: Record<string, number[]>;
   /** Resolves a flat-number string literal to its internal flat id, for ALLOCATE(). */
   resolveTarget: (flatNumber: string) => string;
+  /**
+   * Lookup callbacks for FLAT('x').field / METER('x').field / BILL('x').field.
+   * These read ONLY pre-formula default values (the same "defaults snapshot"
+   * precedent already used for `otherFlats`) — never another flat's overridden
+   * formula result. Unknown identifier or unknown field must throw FormulaError.
+   * Optional for backward compatibility with contexts that don't need these lookups.
+   */
+  lookupFlat?:  (flatNumber: string, field: string) => number;
+  lookupMeter?: (meterNumber: string, field: string) => number;
+  lookupBill?:  (billNumber: string, field: string) => number;
 }
 
 export interface FormulaEvalResult {
@@ -197,6 +223,15 @@ export interface FormulaEvalResult {
 }
 
 const AGGREGATE_FNS = ['AVG', 'SUM', 'MIN', 'MAX'];
+const LOOKUP_FNS = ['BILL', 'METER', 'FLAT'];
+
+/** Validates a BILL/METER/FLAT call node's argument shape: exactly one string literal. */
+function getLookupIdentifier(fnName: string, n: { kind: 'call'; name: string; args: Node[] }): string {
+  if (n.args.length !== 1 || n.args[0].kind !== 'string') {
+    throw new FormulaError(`${fnName}() takes exactly one string argument, e.g. ${fnName}('${fnName === 'BILL' ? 'B-001' : fnName === 'METER' ? 'M1' : 'A101'}')`);
+  }
+  return (n.args[0] as { kind: 'string'; value: string }).value;
+}
 
 export function evaluateFormula(node: Node, ctx: FormulaContext): FormulaEvalResult {
   const allocations: FormulaAllocation[] = [];
@@ -227,8 +262,34 @@ export function evaluateFormula(node: Node, ctx: FormulaContext): FormulaEvalRes
           default: throw new FormulaError(`Unknown operator '${n.op}'`);
         }
       }
+      case 'member': {
+        const obj = n.object;
+        if (obj.kind !== 'call' || !LOOKUP_FNS.includes(obj.name.toUpperCase())) {
+          throw new FormulaError(`Cannot access field '.${n.field}' on this expression`);
+        }
+        const fnName = obj.name.toUpperCase();
+        const identifier = getLookupIdentifier(fnName, obj);
+
+        if (fnName === 'FLAT') {
+          if (!ctx.lookupFlat) throw new FormulaError('FLAT() lookups are not available in this context');
+          return ctx.lookupFlat(identifier, n.field);
+        }
+        if (fnName === 'METER') {
+          if (!ctx.lookupMeter) throw new FormulaError('METER() lookups are not available in this context');
+          return ctx.lookupMeter(identifier, n.field);
+        }
+        // BILL
+        if (!ctx.lookupBill) throw new FormulaError('BILL() lookups are not available in this context');
+        return ctx.lookupBill(identifier, n.field);
+      }
       case 'call': {
         const fnName = n.name.toUpperCase();
+
+        if (LOOKUP_FNS.includes(fnName)) {
+          throw new FormulaError(
+            `${fnName}(...) must be followed by a field, e.g. ${fnName}('${fnName === 'BILL' ? 'B-001' : fnName === 'METER' ? 'M1' : 'A101'}').${fnName === 'BILL' ? 'total_amount' : fnName === 'METER' ? 'consumption' : 'base_bill'}`,
+          );
+        }
 
         if (AGGREGATE_FNS.includes(fnName)) {
           if (n.args.length !== 1 || n.args[0].kind !== 'ident') {
