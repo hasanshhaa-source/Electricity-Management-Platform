@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/services/auth/authService';
-import { getAllMeters } from '@/services/meter/meterService';
+import { getAllMeters, getActiveAssignmentCounts } from '@/services/meter/meterService';
 import { PageHeader } from '@/components/shared/page-header';
 import { MeterTypeBadge } from '@/components/shared/meter-type-badge';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -13,6 +13,7 @@ import { Zap, Plus } from 'lucide-react';
 export default async function MetersPage() {
   await requireAdmin();
   const { data: meters } = await getAllMeters();
+  const assignmentCounts = await getActiveAssignmentCounts((meters ?? []).map((m) => m.id));
 
   return (
     <div className="space-y-6">
@@ -42,6 +43,7 @@ export default async function MetersPage() {
                   <TableHead>Meter Number</TableHead>
                   <TableHead>Building</TableHead>
                   <TableHead>Type</TableHead>
+                  <TableHead>Linked Flats</TableHead>
                   <TableHead>Unit</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Status</TableHead>
@@ -49,7 +51,10 @@ export default async function MetersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {meters.map((meter) => (
+                {meters.map((meter) => {
+                  const linkedCount = assignmentCounts[meter.id] ?? 0;
+                  const expectedComplete = meter.meter_type === 'individual' ? linkedCount >= 1 : linkedCount >= 2;
+                  return (
                   <TableRow key={meter.id}>
                     <TableCell className="font-medium">{meter.meter_number}</TableCell>
                     <TableCell>
@@ -59,6 +64,15 @@ export default async function MetersPage() {
                       </div>
                     </TableCell>
                     <TableCell><MeterTypeBadge type={meter.meter_type} /></TableCell>
+                    <TableCell>
+                      {linkedCount === 0 ? (
+                        <Badge variant="destructive">Not linked</Badge>
+                      ) : (
+                        <Badge variant={expectedComplete ? 'success' : 'warning'}>
+                          {linkedCount} flat{linkedCount !== 1 ? 's' : ''}
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm text-gray-600">{meter.unit}</TableCell>
                     <TableCell className="text-sm text-gray-500 max-w-[200px] truncate">{meter.description ?? '—'}</TableCell>
                     <TableCell>
@@ -77,7 +91,8 @@ export default async function MetersPage() {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>

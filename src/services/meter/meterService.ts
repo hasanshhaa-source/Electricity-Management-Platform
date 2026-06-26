@@ -226,6 +226,22 @@ export async function setIndividualMeterFlat(
   return { data, error: null };
 }
 
+export async function getActiveAssignmentCounts(meterIds: string[]): Promise<Record<string, number>> {
+  if (meterIds.length === 0) return {};
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('flat_meter_assignments')
+    .select('meter_id')
+    .in('meter_id', meterIds)
+    .is('effective_to', null);
+
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    counts[row.meter_id] = (counts[row.meter_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export async function getAllocationsForMeter(meterId: string): Promise<ApiResponse<(FlatMeterAssignment & { flat: { id: string; flat_number: string; floor: number | null } })[]>> {
   const supabase = await createClient();
   const { data, error } = await supabase
