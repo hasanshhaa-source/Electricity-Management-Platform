@@ -8,7 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
-  FunctionSquare, Loader2, CheckCircle2, AlertTriangle, X, Grid3x3,
+  FunctionSquare, Loader2, CheckCircle2, AlertTriangle, X, Grid3x3, Ban,
 } from 'lucide-react';
 import type { FlatBillPreview } from '@/services/billing/billingCalculationService';
 import type { ElectricityCompanyBill, CycleStatus } from '@/types';
@@ -175,10 +175,12 @@ function CellFormulaEditor({ cycleId, buildingId, bill, column, initial, onClose
   const [saving, setSaving]     = useState(false);
   const [clearing, setClearing] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [excluding, setExcluding] = useState(false);
   const [error, setError]       = useState('');
   const [checkResult, setCheckResult] = useState<{ valid: boolean; error: string | null } | null>(null);
 
   const colMeta = COLUMNS.find((c) => c.key === column)!;
+  const isAdjustmentColumn = column === 'adjustment';
 
   async function check() {
     setChecking(true);
@@ -217,6 +219,26 @@ function CellFormulaEditor({ cycleId, buildingId, bill, column, initial, onClose
       setError('Network error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleExclusion() {
+    if (!bill.id) { setError('Calculate bills first before excluding this flat from the residual distribution.'); return; }
+    setExcluding(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/billing/bills/${bill.id}/residual-exclusion`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excluded: !bill.excludedFromResidual }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) { setError(json.error ?? 'Failed to update exclusion'); return; }
+      onSaved();
+    } catch {
+      setError('Network error');
+    } finally {
+      setExcluding(false);
     }
   }
 
@@ -273,6 +295,29 @@ function CellFormulaEditor({ cycleId, buildingId, bill, column, initial, onClose
             {' '}Use variables, arithmetic, AVG/SUM/MIN/MAX(field) across other flats, IF(cond, a, b), and
             FLAT()/METER()/BILL() lookups.
           </p>
+
+          {isAdjustmentColumn && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+              <div className="text-xs text-gray-600">
+                <span className="font-medium text-gray-700">Exclude from residual distribution</span>
+                <p className="text-gray-500">
+                  Quick toggle — this flat gets none of the rounding/loss residual and its adjustment is
+                  fixed at zero, without needing a formula.
+                  {bill.excludedFromResidual && <span className="text-blue-600"> Currently excluded.</span>}
+                </p>
+              </div>
+              <Button
+                variant={bill.excludedFromResidual ? 'default' : 'outline'}
+                size="sm"
+                disabled={excluding}
+                onClick={toggleExclusion}
+                className="shrink-0"
+              >
+                {excluding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                {bill.excludedFromResidual ? 'Excluded' : 'Exclude'}
+              </Button>
+            </div>
+          )}
 
           <Textarea
             value={text}

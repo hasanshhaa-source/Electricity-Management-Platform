@@ -10,10 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Calculator, CheckCircle2, AlertTriangle, Loader2,
-  SendHorizonal, RefreshCw, ChevronDown, ChevronRight, Download, FunctionSquare,
+  SendHorizonal, RefreshCw, ChevronDown, ChevronRight, Download,
 } from 'lucide-react';
 import { BillStatusBadge } from '@/components/shared/status-badge';
-import { FormulaEditor } from '@/components/billing/formula-editor';
 import type { FlatBillPreview } from '@/services/billing/billingCalculationService';
 import type { CycleStatus, BillStatus } from '@/types';
 
@@ -52,8 +51,6 @@ export function CalculationPreview({
   const [issuing, setIssuing]       = useState(false);
   const [error, setError]           = useState('');
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [formulaBill, setFormulaBill] = useState<FlatBillPreview | null>(null);
-  const [togglingExclusion, setTogglingExclusion] = useState<string | null>(null);
 
   const isIssued = cycleStatus === 'issued' || cycleStatus === 'closed';
   const hasBills = bills.length > 0;
@@ -90,24 +87,6 @@ export function CalculationPreview({
       router.refresh();
     } finally {
       setIssuing(false);
-    }
-  }
-
-  async function toggleExclusion(bill: FlatBillPreview) {
-    if (!bill.id) return;
-    setTogglingExclusion(bill.flatId);
-    try {
-      const res = await fetch(`/api/billing/bills/${bill.id}/residual-exclusion`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ excluded: !bill.excludedFromResidual }),
-      });
-      const json = await res.json();
-      if (res.ok && !json.error) {
-        setBills((prev) => prev.map((b) => b.flatId === bill.flatId ? { ...b, excludedFromResidual: !b.excludedFromResidual } : b));
-      }
-    } finally {
-      setTogglingExclusion(null);
     }
   }
 
@@ -194,7 +173,6 @@ export function CalculationPreview({
                 <TableHead className="text-right">Prev. Balance</TableHead>
                 <TableHead className="text-right font-semibold">Total Due</TableHead>
                 <TableHead>Status</TableHead>
-                {!isIssued && <TableHead>Custom Calc</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -241,36 +219,11 @@ export function CalculationPreview({
                         )}
                       </div>
                     </TableCell>
-                    {!isIssued && (
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className={bill.formulaApplied ? 'text-blue-600 border-blue-300' : ''}
-                            onClick={() => setFormulaBill(bill)}
-                            title={bill.formulaApplied ?? 'Add a custom formula'}
-                          >
-                            <FunctionSquare className="h-3.5 w-3.5" />
-                            {bill.formulaApplied ? 'Formula set' : 'Formula'}
-                          </Button>
-                          <label className="flex items-center gap-1 text-xs text-gray-500" title="Exclude this flat from the rounding-residual distribution">
-                            <input
-                              type="checkbox"
-                              checked={bill.excludedFromResidual}
-                              disabled={togglingExclusion === bill.flatId}
-                              onChange={() => toggleExclusion(bill)}
-                            />
-                            Exclude residual
-                          </label>
-                        </div>
-                      </TableCell>
-                    )}
                   </TableRow>
 
                   {expandedRow === bill.flatId && (
                     <TableRow key={`${bill.flatId}-detail`} className="bg-gray-50">
-                      <TableCell colSpan={isIssued ? 10 : 11} className="py-3 px-6">
+                      <TableCell colSpan={10} className="py-3 px-6">
                         <pre className="text-xs text-gray-600 whitespace-pre-wrap font-mono leading-relaxed">
                           {(bill.calculationLog as any)?.explanation ?? 'No explanation available'}
                         </pre>
@@ -320,7 +273,6 @@ export function CalculationPreview({
                   {fmt(bills.reduce((s, b) => s + b.totalDue, 0))}
                 </TableCell>
                 <TableCell />
-                {!isIssued && <TableCell />}
               </TableRow>
             </TableBody>
           </Table>
@@ -340,19 +292,6 @@ export function CalculationPreview({
           <CheckCircle2 className="h-4 w-4 text-green-500" />
           Bills have been issued and are visible to tenants.
         </p>
-      )}
-
-      {formulaBill && (
-        <FormulaEditor
-          open={!!formulaBill}
-          onOpenChange={(open) => { if (!open) setFormulaBill(null); }}
-          flatId={formulaBill.flatId}
-          flatNumber={formulaBill.flatNumber}
-          cycleId={cycleId}
-          initialFormula={formulaBill.formulaApplied ?? ''}
-          initialScope="persistent"
-          onSaved={() => setFormulaBill(null)}
-        />
       )}
     </div>
   );
