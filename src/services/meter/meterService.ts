@@ -75,6 +75,44 @@ export async function updateMeter(
   return { data, error: null };
 }
 
+export async function changeMeterType(
+  id: string,
+  newType: 'individual' | 'shared'
+): Promise<ApiResponse<Meter>> {
+  const supabase = await createClient();
+
+  const { data: meter } = await supabase
+    .from('meters')
+    .select('*')
+    .eq('id', id)
+    .is('deleted_at', null)
+    .single();
+
+  if (!meter) return { data: null, error: 'Meter not found' };
+  if (meter.meter_type === newType) return { data: meter, error: null };
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Close all active assignments — the new type requires re-assigning flats
+  // through the matching UI (IndividualMeterLink or AllocationEditor), since
+  // the old share_percent split doesn't necessarily make sense under the new type.
+  await supabase
+    .from('flat_meter_assignments')
+    .update({ effective_to: today })
+    .eq('meter_id', id)
+    .is('effective_to', null);
+
+  const { data, error } = await supabase
+    .from('meters')
+    .update({ meter_type: newType })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
 export async function deleteMeter(id: string): Promise<ApiResponse<null>> {
   const supabase = await createClient();
   const { error } = await supabase

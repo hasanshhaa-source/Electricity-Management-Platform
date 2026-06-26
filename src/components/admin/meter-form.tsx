@@ -103,8 +103,16 @@ export function MeterForm({ building, meter, onSuccess }: MeterFormProps) {
           <FormField label="Meter Type" htmlFor="meter_type" required>
             <Select
               value={meterType}
-              onValueChange={(v) => setValue('meter_type', v as 'individual' | 'shared')}
-              disabled={isEdit}
+              onValueChange={(v) => {
+                if (isEdit && v !== meter?.meter_type) {
+                  const ok = confirm(
+                    'Changing the meter type will close out its current flat assignment(s). ' +
+                    "You'll need to reassign flats afterward using the matching allocation screen. Continue?"
+                  );
+                  if (!ok) return;
+                }
+                setValue('meter_type', v as 'individual' | 'shared');
+              }}
             >
               <SelectTrigger id="meter_type">
                 <SelectValue />
@@ -114,8 +122,10 @@ export function MeterForm({ building, meter, onSuccess }: MeterFormProps) {
                 <SelectItem value="shared">Shared — split across multiple flats</SelectItem>
               </SelectContent>
             </Select>
-            {isEdit && (
-              <p className="text-xs text-amber-600">Meter type cannot be changed after creation</p>
+            {isEdit && meterType !== meter?.meter_type && (
+              <p className="text-xs text-amber-600">
+                Saving will close existing flat assignment(s) for this meter — you'll need to reassign flats afterward.
+              </p>
             )}
           </FormField>
 
