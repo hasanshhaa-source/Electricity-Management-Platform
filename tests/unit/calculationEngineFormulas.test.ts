@@ -41,8 +41,8 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
   });
 
   it('overrides a flat base bill using a formula referencing AVG(consumption) of other flats', () => {
-    const formulas = new Map<string, FlatFormula>([
-      [FLAT_C, { flatId: FLAT_C, formulaText: 'AVG(consumption) * rate_per_unit' }],
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_C, [{ flatId: FLAT_C, formulaText: 'AVG(consumption) * rate_per_unit' }]],
     ]);
     const result = runBillingCalculation(makeInput({ formulas }));
     const flatC = result.flatBills.find((b) => b.flatId === FLAT_C)!;
@@ -52,8 +52,8 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
   });
 
   it('redirects part of a bill to another flat via ALLOCATE()', () => {
-    const formulas = new Map<string, FlatFormula>([
-      [FLAT_A, { flatId: FLAT_A, formulaText: "base_bill / 2 + ALLOCATE(base_bill / 2, 'B')" }],
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_A, [{ flatId: FLAT_A, formulaText: "base_bill / 2 + ALLOCATE(base_bill / 2, 'B')" }]],
     ]);
     const result = runBillingCalculation(
       makeInput({ formulas, flatNumbers: { [FLAT_A]: 'A', [FLAT_B]: 'B', [FLAT_C]: 'C' } }),
@@ -66,8 +66,8 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
   });
 
   it('falls back to the default calculation and records a warning when a formula errors', () => {
-    const formulas = new Map<string, FlatFormula>([
-      [FLAT_A, { flatId: FLAT_A, formulaText: 'unknown_variable' }],
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_A, [{ flatId: FLAT_A, formulaText: 'unknown_variable' }]],
     ]);
     const result = runBillingCalculation(makeInput({ formulas, flatNumbers: { [FLAT_A]: 'A' } }));
     const flatA = result.flatBills.find((b) => b.flatId === FLAT_A)!;
@@ -84,8 +84,8 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
   });
 
   it('resolves FLAT(x).field lookups end-to-end in legacy (pooled) mode', () => {
-    const formulas = new Map<string, FlatFormula>([
-      [FLAT_C, { flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }],
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_C, [{ flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }]],
     ]);
     const result = runBillingCalculation(
       makeInput({ formulas, flatNumbers: { [FLAT_A]: 'A', [FLAT_B]: 'B', [FLAT_C]: 'C' } }),
@@ -97,8 +97,8 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
   });
 
   it('resolves FLAT(x).field lookups end-to-end in grouped (billGroups) mode', () => {
-    const formulas = new Map<string, FlatFormula>([
-      [FLAT_C, { flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }],
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_C, [{ flatId: FLAT_C, formulaText: "FLAT('A').base_bill + 10" }]],
     ]);
     const billGroups = [
       { groupKey: 'g1', totalCost: 200, totalConsumption: 200, meterIds: ['m1', 'm2'] },
@@ -117,5 +117,59 @@ describe('runBillingCalculation — formulas & residual exclusion', () => {
     expect(flatA.baseBill).toBe(100);
     expect(flatC.baseBill).toBe(110);
     expect(flatC.formulaApplied).toBe("FLAT('A').base_bill + 10");
+  });
+
+  it('overrides previous_balance via formula and confirms it flows into the normal total_due math', () => {
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_A, [{ flatId: FLAT_A, formulaText: '75', target: 'previous_balance' }]],
+    ]);
+    const result = runBillingCalculation(makeInput({ formulas, previousBalances: { [FLAT_A]: 5 } }));
+    const flatA = result.flatBills.find((b) => b.flatId === FLAT_A)!;
+    // base bill 100 (consumption 100 * rate 1) + 0 adjustment (perfectly reconciled) + overridden previous balance 75
+    expect(flatA.previousBalance).toBe(75);
+    expect(flatA.totalDue).toBe(flatA.baseBill + flatA.differenceAdjustment + 75 + flatA.lumpSumCharges);
+  });
+
+  it('overrides lump_sum via formula and confirms it flows into the normal total_due math', () => {
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_B, [{ flatId: FLAT_B, formulaText: '40', target: 'lump_sum' }]],
+    ]);
+    const result = runBillingCalculation(makeInput({ formulas, lumpSumCharges: { [FLAT_B]: 10 } }));
+    const flatB = result.flatBills.find((b) => b.flatId === FLAT_B)!;
+    expect(flatB.lumpSumCharges).toBe(40);
+    expect(flatB.totalDue).toBe(flatB.baseBill + flatB.differenceAdjustment + flatB.previousBalance + 40);
+  });
+
+  it('overrides adjustment directly via formula, bypassing the normal residual distribution for that flat', () => {
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_C, [{ flatId: FLAT_C, formulaText: '99', target: 'adjustment' }]],
+    ]);
+    const result = runBillingCalculation(makeInput({ formulas }));
+    const flatC = result.flatBills.find((b) => b.flatId === FLAT_C)!;
+    expect(flatC.differenceAdjustment).toBe(99);
+    expect(flatC.totalDue).toBe(flatC.baseBill + 99 + flatC.previousBalance + flatC.lumpSumCharges);
+  });
+
+  it('overrides total_due fully via formula, like a full override similar to base_bill', () => {
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_A, [{ flatId: FLAT_A, formulaText: '500', target: 'total_due' }]],
+    ]);
+    const result = runBillingCalculation(makeInput({ formulas }));
+    const flatA = result.flatBills.find((b) => b.flatId === FLAT_A)!;
+    expect(flatA.totalDue).toBe(500);
+  });
+
+  it('allows a flat to have multiple simultaneously-active formulas on different targets', () => {
+    const formulas = new Map<string, FlatFormula[]>([
+      [FLAT_A, [
+        { flatId: FLAT_A, formulaText: '50', target: 'previous_balance' },
+        { flatId: FLAT_A, formulaText: '20', target: 'lump_sum' },
+      ]],
+    ]);
+    const result = runBillingCalculation(makeInput({ formulas }));
+    const flatA = result.flatBills.find((b) => b.flatId === FLAT_A)!;
+    expect(flatA.previousBalance).toBe(50);
+    expect(flatA.lumpSumCharges).toBe(20);
+    expect(flatA.totalDue).toBe(flatA.baseBill + flatA.differenceAdjustment + 50 + 20);
   });
 });

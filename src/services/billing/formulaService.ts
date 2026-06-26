@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { runFormula, FormulaError } from '@/lib/billing/formulaEngine';
 import type { ApiResponse } from '@/types';
 import type { FlatBillFormulaInput } from '@/lib/validation/billing';
-import type { FlatFormula } from './calculationEngine';
+import type { FlatFormula, FormulaTarget } from './calculationEngine';
 
 export interface FlatBillFormula {
   id:             string;
@@ -10,7 +10,7 @@ export interface FlatBillFormula {
   meterId:        string | null;
   cycleId:        string | null;
   formulaText:    string;
-  formulaTarget:  'base_bill' | 'consumption';
+  formulaTarget:  FormulaTarget;
   isActive:       boolean;
   createdAt:      string;
 }
@@ -42,11 +42,15 @@ export async function upsertFlatBillFormula(
 
   const supabase = await createClient();
 
-  // One active formula per (flat, cycle-or-persistent) — replace if it already exists.
+  // One active formula per (flat, cycle-or-persistent, formula_target) — replace
+  // if it already exists. A flat may have several simultaneously-active formulas
+  // as long as each targets a different column (enforced by the partial unique
+  // indexes added in migration 016).
   const existingQuery = supabase
     .from('flat_bill_formulas')
     .select('id')
     .eq('flat_id', input.flat_id)
+    .eq('formula_target', input.formula_target)
     .eq('is_active', true);
 
   const { data: existing } = input.cycle_id
@@ -93,13 +97,15 @@ export async function deleteFlatBillFormula(id: string): Promise<ApiResponse<nul
 }
 
 /**
- * Resolves the active formula set for a calculation run: cycle-specific formulas
- * take priority over persistent (cycle_id = NULL) ones for the same flat.
+ * Resolves the active formula set for a calculation run: for a given
+ * (flat, formula_target) pair, a cycle-specific formula takes priority over a
+ * persistent (cycle_id = NULL) one. A flat may end up with multiple formulas
+ * in its list, one per distinct target.
  */
 export async function getActiveFormulasForCycle(
   buildingId: string,
   cycleId: string,
-): Promise<Map<string, FlatFormula>> {
+): Promise<Map<string, FlatFormula[]>> {
   const supabase = await createClient();
 
   const { data: flats } = await supabase.from('flats').select('id').eq('building_id', buildingId);
@@ -113,13 +119,23 @@ export async function getActiveFormulasForCycle(
     .eq('is_active', true)
     .or(`cycle_id.eq.${cycleId},cycle_id.is.null`);
 
-  const result = new Map<string, FlatFormula>();
-  // Apply persistent ones first, then let cycle-specific ones override.
+  // Resolve one winning formula per (flat_id, formula_target): persistent first,
+  // then let cycle-specific rows override the same key.
+  const byKey = new Map<string, FlatFormula>();
+  const keyOf = (flatId: string, target: string) => `${flatId}::${target}`;
+
   for (const r of (rows ?? []).filter((r: any) => r.cycle_id === null)) {
-    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
+    byKey.set(keyOf(r.flat_id, r.formula_target), { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
   }
   for (const r of (rows ?? []).filter((r: any) => r.cycle_id === cycleId)) {
-    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
+    byKey.set(keyOf(r.flat_id, r.formula_target), { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
+  }
+
+  const result = new Map<string, FlatFormula[]>();
+  for (const formula of byKey.values()) {
+    const list = result.get(formula.flatId) ?? [];
+    list.push(formula);
+    result.set(formula.flatId, list);
   }
   return result;
 }

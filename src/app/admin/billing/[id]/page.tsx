@@ -15,7 +15,9 @@ import { ChevronLeft, Building2, Calendar, CheckCircle2, Circle } from 'lucide-r
 import { ReadingsTable } from './readings-table';
 import { CompanyBillsSection } from './company-bills-section';
 import { CalculationPreview } from './calculation-preview';
+import { FormulaGrid, type ActiveFormulaInfo } from './formula-grid';
 import { FieldLinkControl } from '@/components/field/field-link-control';
+import { getFormulasForBuilding } from '@/services/billing/formulaService';
 import type { CycleStatus } from '@/types';
 
 type Props = { params: Promise<{ id: string }> };
@@ -53,19 +55,32 @@ export default async function BillingCyclePage({ params }: Props) {
   const building = cycle.building as any;
   const { totalMeters, readingsEntered } = statsResult;
 
-  const [rowsResult, billsResult, flatBillsResult, metersResult, flatsResult, billLinks] = await Promise.all([
+  const [rowsResult, billsResult, flatBillsResult, metersResult, flatsResult, billLinks, formulasResult] = await Promise.all([
     getReadingRowsForCycle(cycle.building_id, cycle.period_year, cycle.period_month, id),
     getBillsForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
     getFlatBillsForCycle(id),
     getMetersByBuilding(cycle.building_id),
     getFlatsByBuilding(cycle.building_id),
     getBillLinksForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
+    getFormulasForBuilding(cycle.building_id, id),
   ]);
   const rows      = rowsResult.data      ?? [];
   const bills     = billsResult.data     ?? [];
   const flatBills = flatBillsResult.data ?? [];
   const meters    = metersResult.data    ?? [];
   const flats     = flatsResult.data     ?? [];
+  const formulas  = formulasResult.data  ?? [];
+
+  // Shape into flatId -> column -> active formula info for the grid (cycle-specific
+  // formulas for THIS cycle take priority over persistent ones for the same cell).
+  const activeFormulas: Record<string, Partial<Record<string, ActiveFormulaInfo>>> = {};
+  for (const f of [...formulas].sort((a) => (a.cycleId === null ? -1 : 1))) {
+    activeFormulas[f.flatId] = activeFormulas[f.flatId] ?? {};
+    activeFormulas[f.flatId][f.formulaTarget] = {
+      formulaText: f.formulaText,
+      scope: f.cycleId ? 'one-off' : 'persistent',
+    };
+  }
 
   const periodLabel = `${MONTH_NAMES[cycle.period_month - 1]} ${cycle.period_year}`;
   const currentStep = STATUS_ORDER[cycle.status] ?? 0;
@@ -209,6 +224,24 @@ export default async function BillingCyclePage({ params }: Props) {
             currency={building?.currency ?? 'SAR'}
             cycleStatus={cycle.status}
             initialBills={flatBills}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Per-cell formula spreadsheet grid + safety-net discrepancy banner */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Spreadsheet — {periodLabel}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FormulaGrid
+            cycleId={id}
+            buildingId={cycle.building_id}
+            currency={building?.currency ?? 'SAR'}
+            cycleStatus={cycle.status}
+            flatBills={flatBills}
+            companyBills={bills}
+            activeFormulas={activeFormulas as any}
           />
         </CardContent>
       </Card>

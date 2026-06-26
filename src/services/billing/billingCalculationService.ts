@@ -205,7 +205,7 @@ async function gatherCalculationInputs(
   }
 
   // 8. Custom formulas active for this cycle (cycle-specific takes priority over persistent)
-  const formulas: Map<string, FlatFormula> = await getActiveFormulasForCycle(buildingId, cycleId);
+  const formulas: Map<string, FlatFormula[]> = await getActiveFormulasForCycle(buildingId, cycleId);
 
   // 9. Flat numbers (used to resolve ALLOCATE('flatNumber') targets in formulas)
   const { data: allFlats } = await supabase.from('flats').select('id, flat_number').eq('building_id', buildingId);

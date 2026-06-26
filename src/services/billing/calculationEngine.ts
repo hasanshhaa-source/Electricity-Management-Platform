@@ -13,13 +13,31 @@ import { runFormula, FormulaError } from '@/lib/billing/formulaEngine';
 
 export type DiffDistributionMethod = 'proportional' | 'equal';
 
+export type FormulaTarget =
+  | 'base_bill' | 'consumption' | 'rate_per_unit' | 'adjustment'
+  | 'previous_balance' | 'lump_sum' | 'total_due';
+
 export interface FlatFormula {
   flatId:      string;
   formulaText: string;
   /** What the formula's result replaces. Defaults to 'base_bill' (the whole bill amount)
-   *  for backward compatibility. 'consumption' overrides only the consumption value,
-   *  letting the normal rate/difference math run on top of it. */
-  target?:     'base_bill' | 'consumption';
+   *  for backward compatibility.
+   *   - 'consumption'      → overrides only the consumption value; normal rate/difference
+   *                          math still runs on top of it (applied in Pass 1b, pre-formula-on-money).
+   *   - 'base_bill'        → overrides the whole pre-adjustment bill amount (existing behavior).
+   *   - 'rate_per_unit'    → overrides the per-flat rate; base_bill is recomputed as
+   *                          consumption × overridden rate.
+   *   - 'previous_balance' → overrides the flat's carried-over balance INPUT — flows into
+   *                          the normal total_due sum, doesn't bypass it.
+   *   - 'lump_sum'         → overrides the flat's lump-sum charge INPUT — same as above.
+   *   - 'adjustment'       → overrides the difference/residual adjustment directly for this
+   *                          flat (the flat is implicitly excluded from the normal residual
+   *                          distribution so the override isn't immediately clobbered).
+   *   - 'total_due'        → full override of the final total, like base_bill but applied
+   *                          after adjustment/previous_balance/lump_sum are summed.
+   * A flat may have at most one ACTIVE formula PER target simultaneously (enforced by
+   * formulaService/migration 016), so multiple targets can be combined on the same flat. */
+  target?:     FormulaTarget;
 }
 
 export interface ReadingInput {
@@ -50,8 +68,12 @@ export interface CalculationInput {
   dueDate:                   string;   // YYYY-MM-DD
   periodYear:                number;
   periodMonth:               number;
-  /** Active custom formulas keyed by flatId — optional, defaults to no overrides. */
-  formulas?:                 Map<string, FlatFormula>;
+  /**
+   * Active custom formulas keyed by flatId — a flat may have multiple, one per
+   * distinct `target` column (enforced by the caller/persistence layer).
+   * Optional, defaults to no overrides.
+   */
+  formulas?:                 Map<string, FlatFormula[]>;
   /** flatId → flatNumber, used to resolve ALLOCATE('flatNumber') targets in formulas. */
   flatNumbers?:              Record<string, string>;
   /** Flats excluded from the difference/residual distribution step. */
@@ -233,20 +255,33 @@ export function calcBaseBills(
 }
 
 export interface FormulaApplicationResult {
-  baseBills:           Map<string, number>;
-  appliedFormula:      Map<string, string>;   // flatId → formula text that was successfully applied
-  formulaErrors:       Map<string, string>;   // flatId → error message, if its formula failed
-  consumptionOverrides: Map<string, number>;  // flatId → new consumption, for 'consumption'-target formulas
+  baseBills:            Map<string, number>;
+  ratePerUnitOverrides:  Map<string, number>;   // flatId → overridden rate, for 'rate_per_unit'-target formulas
+  previousBalanceOverrides: Map<string, number>; // flatId → overridden previous_balance INPUT
+  lumpSumOverrides:      Map<string, number>;    // flatId → overridden lump_sum INPUT
+  adjustmentOverrides:   Map<string, number>;    // flatId → overridden difference adjustment (bypasses residual distribution)
+  totalDueOverrides:     Map<string, number>;    // flatId → full override of the final total_due
+  appliedFormula:        Map<string, string[]>;  // flatId → formula texts that were successfully applied (one per target)
+  formulaErrors:         Map<string, string[]>;  // flatId → error messages for any targets that failed
+  consumptionOverrides:  Map<string, number>;    // flatId → new consumption, for 'consumption'-target formulas
 }
 
 /**
- * Step 4b — Apply any active custom formulas, overriding the default base bill
- * (or, for 'consumption'-target formulas, just the consumption value) for the
- * flats they're attached to. A base_bill-target formula may also redirect
- * amounts to other flats via ALLOCATE(amount, 'flatNumber'); ALLOCATE isn't
- * permitted in consumption-target formulas since its argument is a money
- * amount, not a consumption delta. If a formula throws, that flat silently
- * falls back to its default base bill and the error is recorded.
+ * Step 4b — Apply any active custom formulas (up to one per target column) for
+ * the flats they're attached to:
+ *   - 'consumption'/'base_bill'/'rate_per_unit' feed into this pass's baseBills output
+ *     (rate_per_unit recomputes base_bill = consumption × overridden rate).
+ *   - 'previous_balance'/'lump_sum' are returned as override maps for those INPUTS —
+ *     the caller still runs them through the normal total_due summation in Pass 3.
+ *   - 'adjustment' is returned as a direct override for the flat's difference
+ *     adjustment, bypassing the normal residual distribution for that flat (the
+ *     caller must exclude it from distributeDifference()).
+ *   - 'total_due' is returned as a full override of the final total, applied last.
+ * A base_bill-target formula may also redirect amounts to other flats via
+ * ALLOCATE(amount, 'flatNumber'); ALLOCATE isn't permitted for any other target
+ * since only base_bill represents a redistributable money amount in this pass.
+ * If a formula throws, that target silently falls back to its default and the
+ * error is recorded.
  */
 export function applyFormulas(
   baseBillsIn:       Map<string, number>,
@@ -256,17 +291,27 @@ export function applyFormulas(
   previousBalances:  Record<string, number>,
   totalBuildingCost: number,
   totalBuildingConsumption: number,
-  formulas:          Map<string, FlatFormula>,
+  formulas:          Map<string, FlatFormula[]>,
   flatNumbers:       Record<string, string>,
   meterNumbers:      Record<string, string> = {},
   billDefaults:      Record<string, { total_amount: number; total_units: number; rate: number }> = {},
 ): FormulaApplicationResult {
-  const baseBills           = new Map(baseBillsIn);
-  const appliedFormula      = new Map<string, string>();
-  const formulaErrors       = new Map<string, string>();
-  const consumptionOverrides = new Map<string, number>();
+  const baseBills               = new Map(baseBillsIn);
+  const ratePerUnitOverrides     = new Map<string, number>();
+  const previousBalanceOverrides = new Map<string, number>();
+  const lumpSumOverrides         = new Map<string, number>();
+  const adjustmentOverrides      = new Map<string, number>();
+  const totalDueOverrides        = new Map<string, number>();
+  const appliedFormula           = new Map<string, string[]>();
+  const formulaErrors            = new Map<string, string[]>();
+  const consumptionOverrides     = new Map<string, number>();
 
-  if (formulas.size === 0) return { baseBills, appliedFormula, formulaErrors, consumptionOverrides };
+  const result: FormulaApplicationResult = {
+    baseBills, ratePerUnitOverrides, previousBalanceOverrides, lumpSumOverrides,
+    adjustmentOverrides, totalDueOverrides, appliedFormula, formulaErrors, consumptionOverrides,
+  };
+
+  if (formulas.size === 0) return result;
 
   const flatNumberToId = new Map(Object.entries(flatNumbers).map(([id, num]) => [num, id]));
 
@@ -314,9 +359,21 @@ export function applyFormulas(
     return (data as Record<string, number>)[field];
   };
 
+  // Targets are processed in this fixed order per flat so that money-cell
+  // formulas can see the effect of consumption/rate overrides evaluated
+  // earlier for the SAME flat (consistent with the single pre-formula
+  // defaults snapshot used for OTHER flats' lookups, which never changes).
+  const TARGET_ORDER: FormulaTarget[] = [
+    'rate_per_unit', 'consumption', 'base_bill',
+    'previous_balance', 'lump_sum', 'adjustment', 'total_due',
+  ];
+
   for (const tenancy of activeTenancies) {
-    const formula = formulas.get(tenancy.flatId);
-    if (!formula) continue;
+    const flatFormulas = formulas.get(tenancy.flatId);
+    if (!flatFormulas || flatFormulas.length === 0) continue;
+
+    const byTarget = new Map<FormulaTarget, FlatFormula>();
+    for (const f of flatFormulas) byTarget.set(f.target ?? 'base_bill', f);
 
     const otherFlats: Record<string, number[]> = { consumption: [], base_bill: [] };
     for (const other of activeTenancies) {
@@ -325,56 +382,92 @@ export function applyFormulas(
       otherFlats.base_bill.push(baseBillsIn.get(other.flatId) ?? 0);
     }
 
-    const consumption = flatConsumptions.get(tenancy.flatId)?.totalConsumption ?? 0;
-    const primary      = flatConsumptions.get(tenancy.flatId)?.contributions[0];
-    const rate         = ratePerUnitByFlat.get(tenancy.flatId) ?? 0;
-    const target        = formula.target ?? 'base_bill';
+    const appliedTexts: string[] = [];
+    const errorTexts:   string[] = [];
 
-    try {
-      const { value, allocations } = runFormula(formula.formulaText, {
-        variables: {
-          consumption,
-          previous_reading:        primary?.openingReading ?? 0,
-          current_reading:         primary?.closingReading ?? 0,
-          rate_per_unit:           rate,
-          base_bill:               baseBillsIn.get(tenancy.flatId) ?? 0,
-          previous_balance:        previousBalances[tenancy.flatId] ?? 0,
-          total_building_cost:     totalBuildingCost,
-          total_building_consumption: totalBuildingConsumption,
-        },
-        otherFlats,
-        resolveTarget: (flatNumber) => {
-          const id = flatNumberToId.get(flatNumber);
-          if (!id) throw new FormulaError(`Unknown flat number '${flatNumber}'`);
-          return id;
-        },
-        lookupFlat,
-        lookupMeter,
-        lookupBill,
-      });
+    for (const target of TARGET_ORDER) {
+      const formula = byTarget.get(target);
+      if (!formula) continue;
 
-      if (target === 'consumption') {
-        if (allocations.length > 0) {
+      // Re-read current (possibly already-overridden-this-flat) state for each target.
+      const consumption = flatConsumptions.get(tenancy.flatId)?.totalConsumption ?? 0;
+      const primary      = flatConsumptions.get(tenancy.flatId)?.contributions[0];
+      const rate         = ratePerUnitByFlat.get(tenancy.flatId) ?? 0;
+
+      try {
+        const { value, allocations } = runFormula(formula.formulaText, {
+          variables: {
+            consumption,
+            previous_reading:        primary?.openingReading ?? 0,
+            current_reading:         primary?.closingReading ?? 0,
+            rate_per_unit:           rate,
+            base_bill:               baseBillsIn.get(tenancy.flatId) ?? 0,
+            previous_balance:        previousBalances[tenancy.flatId] ?? 0,
+            total_building_cost:     totalBuildingCost,
+            total_building_consumption: totalBuildingConsumption,
+          },
+          otherFlats,
+          resolveTarget: (flatNumber) => {
+            const id = flatNumberToId.get(flatNumber);
+            if (!id) throw new FormulaError(`Unknown flat number '${flatNumber}'`);
+            return id;
+          },
+          lookupFlat,
+          lookupMeter,
+          lookupBill,
+        });
+
+        if (target !== 'base_bill' && allocations.length > 0) {
           throw new FormulaError(
-            "ALLOCATE() cannot be used in a consumption-only formula — switch to 'Override entire bill amount' mode to redirect money.",
+            `ALLOCATE() cannot be used in a '${target}'-target formula — only 'Override entire bill amount' mode can redirect money.`,
           );
         }
-        const newConsumption = round(value, 3);
-        consumptionOverrides.set(tenancy.flatId, newConsumption);
-        baseBills.set(tenancy.flatId, round(newConsumption * rate, 2));
-      } else {
-        baseBills.set(tenancy.flatId, round(value, 2));
-        for (const alloc of allocations) {
-          baseBills.set(alloc.target, round((baseBills.get(alloc.target) ?? 0) + alloc.amount, 2));
+
+        switch (target) {
+          case 'consumption': {
+            const newConsumption = round(value, 3);
+            consumptionOverrides.set(tenancy.flatId, newConsumption);
+            baseBills.set(tenancy.flatId, round(newConsumption * rate, 2));
+            break;
+          }
+          case 'rate_per_unit': {
+            const newRate = round(value, 6);
+            ratePerUnitOverrides.set(tenancy.flatId, newRate);
+            ratePerUnitByFlat.set(tenancy.flatId, newRate);
+            baseBills.set(tenancy.flatId, round(consumption * newRate, 2));
+            break;
+          }
+          case 'base_bill': {
+            baseBills.set(tenancy.flatId, round(value, 2));
+            for (const alloc of allocations) {
+              baseBills.set(alloc.target, round((baseBills.get(alloc.target) ?? 0) + alloc.amount, 2));
+            }
+            break;
+          }
+          case 'previous_balance':
+            previousBalanceOverrides.set(tenancy.flatId, round(value, 2));
+            break;
+          case 'lump_sum':
+            lumpSumOverrides.set(tenancy.flatId, round(value, 2));
+            break;
+          case 'adjustment':
+            adjustmentOverrides.set(tenancy.flatId, round(value, 2));
+            break;
+          case 'total_due':
+            totalDueOverrides.set(tenancy.flatId, round(value, 2));
+            break;
         }
+        appliedTexts.push(formula.formulaText);
+      } catch (err) {
+        errorTexts.push(`[${target}] ${(err as Error).message}`);
       }
-      appliedFormula.set(tenancy.flatId, formula.formulaText);
-    } catch (err) {
-      formulaErrors.set(tenancy.flatId, (err as Error).message);
     }
+
+    if (appliedTexts.length > 0) appliedFormula.set(tenancy.flatId, appliedTexts);
+    if (errorTexts.length   > 0) formulaErrors.set(tenancy.flatId, errorTexts);
   }
 
-  return { baseBills, appliedFormula, formulaErrors, consumptionOverrides };
+  return result;
 }
 
 /**
@@ -456,7 +549,7 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     totalBuildingConsumption,
     previousBalances,
     diffMethod,
-    formulas             = new Map<string, FlatFormula>(),
+    formulas             = new Map<string, FlatFormula[]>(),
     flatNumbers          = {},
     excludedFromResidual = new Set<string>(),
     billGroups           = [] as BillGroupInput[],
@@ -572,16 +665,22 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
 
   // ── Pass 2: apply formulas ──────────────────────────────────────────────────
   // Custom per-flat formulas may override base_bill (and redirect amounts to
-  // other flats via ALLOCATE) or override consumption directly. This is the
-  // only step that can change the default cells computed in Pass 1.
-  const { baseBills, appliedFormula, formulaErrors, consumptionOverrides } = applyFormulas(
+  // other flats via ALLOCATE), consumption, rate_per_unit, previous_balance,
+  // lump_sum, adjustment, or total_due directly. This is the only step that
+  // can change the default cells computed in Pass 1.
+  const {
+    baseBills, ratePerUnitOverrides, previousBalanceOverrides, lumpSumOverrides,
+    adjustmentOverrides, totalDueOverrides, appliedFormula, formulaErrors, consumptionOverrides,
+  } = applyFormulas(
     defaultBaseBills, flatConsumptions, activeTenancies, ratePerUnitByFlat,
     previousBalances, reconciledCost, reconciledConsumption,
     formulas, flatNumbers, meterNumbers, billDefaults,
   );
 
-  for (const [flatId, msg] of formulaErrors) {
-    warnings.push(`Formula for flat ${flatNumbers[flatId] ?? flatId} failed (${msg}) — used default calculation instead.`);
+  for (const [flatId, msgs] of formulaErrors) {
+    for (const msg of msgs) {
+      warnings.push(`Formula for flat ${flatNumbers[flatId] ?? flatId} failed (${msg}) — used default calculation instead.`);
+    }
   }
 
   // Display-only: reflect any consumption overridden by a 'consumption'-target formula.
@@ -603,6 +702,11 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
   let sumOfBaseBills = 0;
   for (const v of baseBills.values()) sumOfBaseBills = round(sumOfBaseBills + v, 2);
 
+  // Flats with a direct 'adjustment'-target formula are excluded from the normal
+  // residual distribution so their override isn't immediately overwritten —
+  // their adjustment is applied explicitly below instead.
+  const excludedForAdjustmentOverride = new Set([...excludedFromResidual, ...adjustmentOverrides.keys()]);
+
   let difference: number;
   let adjustments: Map<string, number>;
 
@@ -612,7 +716,11 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
   } else {
     difference = round(totalBuildingCost - sumOfBaseBills, 2);
     const activeFlatIds = activeTenancies.map((t) => t.flatId);
-    adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod, excludedFromResidual);
+    adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod, excludedForAdjustmentOverride);
+  }
+
+  for (const [flatId, value] of adjustmentOverrides) {
+    adjustments.set(flatId, value);
   }
 
   // Step 7: assemble final bill results
@@ -626,10 +734,16 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     const consumption  = round(flatData?.totalConsumption ?? 0, 3);
     const baseBill     = baseBills.get(flatId) ?? 0;
     const adjustment   = adjustments.get(flatId) ?? 0;
-    const prevBalance  = round(previousBalances[flatId] ?? 0, 2);
-    const lumpSum      = round(lumpSumCharges[flatId] ?? 0, 2);
+    // previous_balance/lump_sum overrides replace the INPUT value, then flow
+    // through the normal total_due summation below — they don't bypass it.
+    const prevBalance  = round(previousBalanceOverrides.get(flatId) ?? previousBalances[flatId] ?? 0, 2);
+    const lumpSum      = round(lumpSumOverrides.get(flatId) ?? lumpSumCharges[flatId] ?? 0, 2);
     const ratePerUnit  = ratePerUnitByFlat.get(flatId) ?? 0;
-    const totalDue     = round(baseBill + adjustment + prevBalance + lumpSum, 2);
+    // total_due-target formulas fully override the final total, similar to how
+    // base_bill-target formulas override the pre-adjustment amount.
+    const totalDue     = totalDueOverrides.has(flatId)
+      ? round(totalDueOverrides.get(flatId)!, 2)
+      : round(baseBill + adjustment + prevBalance + lumpSum, 2);
 
     if (consumption === 0) flatsWithZeroConsumption++;
 
@@ -669,8 +783,8 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
       contributions,
       calculationLog: calcLog,
       excludedFromResidual: excludedFromResidual.has(flatId),
-      formulaApplied:       appliedFormula.get(flatId) ?? null,
-      formulaError:         formulaErrors.get(flatId) ?? null,
+      formulaApplied:       appliedFormula.get(flatId)?.join('; ') ?? null,
+      formulaError:         formulaErrors.get(flatId)?.join('; ') ?? null,
     });
 
     totalCalculatedDue = round(totalCalculatedDue + totalDue, 2);

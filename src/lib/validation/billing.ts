@@ -72,7 +72,10 @@ export const flatBillFormulaSchema = z.object({
   meter_id:     z.string().uuid('Invalid meter').optional().nullable(),
   cycle_id:     z.string().uuid('Invalid cycle').optional().nullable(),  // null = persistent, applies to every future cycle
   formula_text: z.string().min(1, 'Formula is required').max(2000),
-  formula_target: z.enum(['base_bill', 'consumption']).default('base_bill'),
+  formula_target: z.enum([
+    'base_bill', 'consumption', 'rate_per_unit', 'adjustment',
+    'previous_balance', 'lump_sum', 'total_due',
+  ]).default('base_bill'),
 });
 
 export type FlatBillFormulaInput = z.infer<typeof flatBillFormulaSchema>;
