@@ -16,6 +16,10 @@ export type DiffDistributionMethod = 'proportional' | 'equal';
 export interface FlatFormula {
   flatId:      string;
   formulaText: string;
+  /** What the formula's result replaces. Defaults to 'base_bill' (the whole bill amount)
+   *  for backward compatibility. 'consumption' overrides only the consumption value,
+   *  letting the normal rate/difference math run on top of it. */
+  target?:     'base_bill' | 'consumption';
 }
 
 export interface ReadingInput {
@@ -52,6 +56,29 @@ export interface CalculationInput {
   flatNumbers?:              Record<string, string>;
   /** Flats excluded from the difference/residual distribution step. */
   excludedFromResidual?:     Set<string>;
+  /**
+   * When present and non-empty, switches to per-bill-group calculation: each group
+   * represents one or more company bills linked to a specific set of meters, with its
+   * own rate and its own difference/residual reconciliation — instead of one
+   * building-wide pool. Meters not covered by any group contribute no consumption.
+   * Omit (or pass empty) to use the original single-pool behavior unchanged.
+   */
+  billGroups?:               BillGroupInput[];
+  /**
+   * flatId → fixed amount from company bills billed directly to that flat (e.g. the
+   * owner absorbing a vacant flat's cost) — added straight to totalDue, bypassing
+   * consumption math and the difference/residual distribution entirely.
+   */
+  lumpSumCharges?:           Record<string, number>;
+}
+
+export interface BillGroupInput {
+  /** Identifier for this group — typically the company bill id, used only for logging. */
+  groupKey:         string;
+  totalCost:        number;
+  totalConsumption: number;
+  /** Meters whose consumption is pooled against this group's cost. */
+  meterIds:         string[];
 }
 
 export interface MeterContribution {
@@ -74,7 +101,8 @@ export interface FlatBillResult {
   baseBill:             number;         // consumption × ratePerUnit
   differenceAdjustment: number;
   previousBalance:      number;
-  totalDue:             number;         // baseBill + adjustment + previousBalance
+  lumpSumCharges:       number;         // fixed amount billed directly to this flat, outside consumption math
+  totalDue:             number;         // baseBill + adjustment + previousBalance + lumpSumCharges
   contributions:        MeterContribution[];
   calculationLog:       FlatBillCalcLog;
   excludedFromResidual: boolean;
@@ -91,6 +119,8 @@ export interface FlatBillCalcLog {
   diffMethod:               DiffDistributionMethod;
   meterContributions:       MeterContribution[];
   explanation:              string;
+  /** Present only in grouped (bill-linked) mode — the bill group(s) this flat draws from. */
+  billGroups?:              { groupKey: string; cost: number; consumption: number; rate: number }[];
 }
 
 export interface CalculationSummary {
@@ -194,33 +224,38 @@ export function calcBaseBills(
 }
 
 export interface FormulaApplicationResult {
-  baseBills:      Map<string, number>;
-  appliedFormula: Map<string, string>;   // flatId → formula text that was successfully applied
-  formulaErrors:  Map<string, string>;   // flatId → error message, if its formula failed
+  baseBills:           Map<string, number>;
+  appliedFormula:      Map<string, string>;   // flatId → formula text that was successfully applied
+  formulaErrors:       Map<string, string>;   // flatId → error message, if its formula failed
+  consumptionOverrides: Map<string, number>;  // flatId → new consumption, for 'consumption'-target formulas
 }
 
 /**
  * Step 4b — Apply any active custom formulas, overriding the default base bill
- * for the flats they're attached to. A formula may also redirect amounts to
- * other flats via ALLOCATE(amount, 'flatNumber'). If a formula throws, that
- * flat silently falls back to its default base bill and the error is recorded.
+ * (or, for 'consumption'-target formulas, just the consumption value) for the
+ * flats they're attached to. A base_bill-target formula may also redirect
+ * amounts to other flats via ALLOCATE(amount, 'flatNumber'); ALLOCATE isn't
+ * permitted in consumption-target formulas since its argument is a money
+ * amount, not a consumption delta. If a formula throws, that flat silently
+ * falls back to its default base bill and the error is recorded.
  */
 export function applyFormulas(
   baseBillsIn:       Map<string, number>,
   flatConsumptions:  Map<string, { totalConsumption: number; contributions: MeterContribution[] }>,
   activeTenancies:   ActiveTenancy[],
-  costPerUnit:       number,
+  ratePerUnitByFlat: Map<string, number>,
   previousBalances:  Record<string, number>,
   totalBuildingCost: number,
   totalBuildingConsumption: number,
   formulas:          Map<string, FlatFormula>,
   flatNumbers:       Record<string, string>,
 ): FormulaApplicationResult {
-  const baseBills      = new Map(baseBillsIn);
-  const appliedFormula = new Map<string, string>();
-  const formulaErrors  = new Map<string, string>();
+  const baseBills           = new Map(baseBillsIn);
+  const appliedFormula      = new Map<string, string>();
+  const formulaErrors       = new Map<string, string>();
+  const consumptionOverrides = new Map<string, number>();
 
-  if (formulas.size === 0) return { baseBills, appliedFormula, formulaErrors };
+  if (formulas.size === 0) return { baseBills, appliedFormula, formulaErrors, consumptionOverrides };
 
   const flatNumberToId = new Map(Object.entries(flatNumbers).map(([id, num]) => [num, id]));
 
@@ -237,6 +272,8 @@ export function applyFormulas(
 
     const consumption = flatConsumptions.get(tenancy.flatId)?.totalConsumption ?? 0;
     const primary      = flatConsumptions.get(tenancy.flatId)?.contributions[0];
+    const rate         = ratePerUnitByFlat.get(tenancy.flatId) ?? 0;
+    const target        = formula.target ?? 'base_bill';
 
     try {
       const { value, allocations } = runFormula(formula.formulaText, {
@@ -244,7 +281,7 @@ export function applyFormulas(
           consumption,
           previous_reading:        primary?.openingReading ?? 0,
           current_reading:         primary?.closingReading ?? 0,
-          rate_per_unit:           costPerUnit,
+          rate_per_unit:           rate,
           base_bill:               baseBillsIn.get(tenancy.flatId) ?? 0,
           previous_balance:        previousBalances[tenancy.flatId] ?? 0,
           total_building_cost:     totalBuildingCost,
@@ -258,9 +295,20 @@ export function applyFormulas(
         },
       });
 
-      baseBills.set(tenancy.flatId, round(value, 2));
-      for (const alloc of allocations) {
-        baseBills.set(alloc.target, round((baseBills.get(alloc.target) ?? 0) + alloc.amount, 2));
+      if (target === 'consumption') {
+        if (allocations.length > 0) {
+          throw new FormulaError(
+            "ALLOCATE() cannot be used in a consumption-only formula — switch to 'Override entire bill amount' mode to redirect money.",
+          );
+        }
+        const newConsumption = round(value, 3);
+        consumptionOverrides.set(tenancy.flatId, newConsumption);
+        baseBills.set(tenancy.flatId, round(newConsumption * rate, 2));
+      } else {
+        baseBills.set(tenancy.flatId, round(value, 2));
+        for (const alloc of allocations) {
+          baseBills.set(alloc.target, round((baseBills.get(alloc.target) ?? 0) + alloc.amount, 2));
+        }
       }
       appliedFormula.set(tenancy.flatId, formula.formulaText);
     } catch (err) {
@@ -268,7 +316,7 @@ export function applyFormulas(
     }
   }
 
-  return { baseBills, appliedFormula, formulaErrors };
+  return { baseBills, appliedFormula, formulaErrors, consumptionOverrides };
 }
 
 /**
@@ -353,6 +401,8 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     formulas             = new Map<string, FlatFormula>(),
     flatNumbers          = {},
     excludedFromResidual = new Set<string>(),
+    billGroups           = [] as BillGroupInput[],
+    lumpSumCharges       = {} as Record<string, number>,
   } = input;
 
   if (activeTenancies.length === 0) {
@@ -385,19 +435,79 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     }
   }
 
-  // Step 2: flat consumptions
-  const flatConsumptions = calcFlatConsumptions(meterConsumptions, assignments);
+  // Steps 2–6: either the single-pool model (default) or, when billGroups is supplied,
+  // a per-bill-group model where each group reconciles independently against its own
+  // company bill(s) instead of sharing one building-wide rounding/loss residual.
+  let flatConsumptions:   Map<string, { totalConsumption: number; contributions: MeterContribution[] }>;
+  let defaultBaseBills:   Map<string, number>;
+  let ratePerUnitByFlat:  Map<string, number>;
+  let groupAdjustments:   Map<string, number>;
+  let groupLogsByFlat:    Map<string, { groupKey: string; cost: number; consumption: number; rate: number }[]> = new Map();
+  let reconciledCost:        number;
+  let reconciledConsumption: number;
 
-  // Step 3: cost per unit
-  const costPerUnit = calcCostPerUnit(totalBuildingCost, totalBuildingConsumption);
+  if (billGroups.length > 0) {
+    flatConsumptions  = new Map();
+    defaultBaseBills  = new Map();
+    ratePerUnitByFlat = new Map();
+    groupAdjustments  = new Map();
 
-  // Step 4: base bills
-  const defaultBaseBills = calcBaseBills(flatConsumptions, activeTenancies, costPerUnit);
+    const consAccum = new Map<string, number>();
+    const costAccum = new Map<string, number>();
+    const contribAccum = new Map<string, MeterContribution[]>();
+
+    for (const group of billGroups) {
+      const groupAssignments = assignments.filter((a) => group.meterIds.includes(a.meterId));
+      const groupFlatConsumptions = calcFlatConsumptions(meterConsumptions, groupAssignments);
+      const groupFlatIds = [...groupFlatConsumptions.keys()];
+      const groupTenancies = activeTenancies.filter((t) => groupFlatConsumptions.has(t.flatId));
+      const groupRate = calcCostPerUnit(group.totalCost, group.totalConsumption);
+      const groupBaseBills = calcBaseBills(groupFlatConsumptions, groupTenancies, groupRate);
+
+      let groupSum = 0;
+      for (const v of groupBaseBills.values()) groupSum = round(groupSum + v, 2);
+      const groupDifference = round(group.totalCost - groupSum, 2);
+      const groupAdj = distributeDifference(groupDifference, groupFlatConsumptions, groupFlatIds, diffMethod, excludedFromResidual);
+
+      for (const flatId of groupFlatIds) {
+        const fc = groupFlatConsumptions.get(flatId)!;
+        consAccum.set(flatId, round((consAccum.get(flatId) ?? 0) + fc.totalConsumption, 3));
+        costAccum.set(flatId, round((costAccum.get(flatId) ?? 0) + (groupBaseBills.get(flatId) ?? 0), 2));
+        contribAccum.set(flatId, [...(contribAccum.get(flatId) ?? []), ...fc.contributions]);
+        groupAdjustments.set(flatId, round((groupAdjustments.get(flatId) ?? 0) + (groupAdj.get(flatId) ?? 0), 2));
+        ratePerUnitByFlat.set(flatId, groupRate);
+
+        const log = groupLogsByFlat.get(flatId) ?? [];
+        log.push({ groupKey: group.groupKey, cost: group.totalCost, consumption: group.totalConsumption, rate: groupRate });
+        groupLogsByFlat.set(flatId, log);
+      }
+    }
+
+    for (const flatId of new Set([...consAccum.keys(), ...contribAccum.keys()])) {
+      const consumption = consAccum.get(flatId) ?? 0;
+      flatConsumptions.set(flatId, { totalConsumption: consumption, contributions: contribAccum.get(flatId) ?? [] });
+      defaultBaseBills.set(flatId, costAccum.get(flatId) ?? 0);
+      if (consumption > 0) {
+        ratePerUnitByFlat.set(flatId, round((costAccum.get(flatId) ?? 0) / consumption, 6));
+      }
+    }
+
+    reconciledCost        = billGroups.reduce((s, g) => s + g.totalCost, 0);
+    reconciledConsumption = billGroups.reduce((s, g) => s + g.totalConsumption, 0);
+  } else {
+    flatConsumptions  = calcFlatConsumptions(meterConsumptions, assignments);
+    const costPerUnit = calcCostPerUnit(totalBuildingCost, totalBuildingConsumption);
+    defaultBaseBills  = calcBaseBills(flatConsumptions, activeTenancies, costPerUnit);
+    ratePerUnitByFlat = new Map(activeTenancies.map((t) => [t.flatId, costPerUnit]));
+    reconciledCost        = totalBuildingCost;
+    reconciledConsumption = totalBuildingConsumption;
+    groupAdjustments  = new Map(); // computed below via the single-pool path instead
+  }
 
   // Step 4b: apply any active custom formulas
-  const { baseBills, appliedFormula, formulaErrors } = applyFormulas(
-    defaultBaseBills, flatConsumptions, activeTenancies, costPerUnit,
-    previousBalances, totalBuildingCost, totalBuildingConsumption,
+  const { baseBills, appliedFormula, formulaErrors, consumptionOverrides } = applyFormulas(
+    defaultBaseBills, flatConsumptions, activeTenancies, ratePerUnitByFlat,
+    previousBalances, reconciledCost, reconciledConsumption,
     formulas, flatNumbers,
   );
 
@@ -405,14 +515,29 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     warnings.push(`Formula for flat ${flatNumbers[flatId] ?? flatId} failed (${msg}) — used default calculation instead.`);
   }
 
-  // Step 5: sum and difference
+  // Display-only: reflect any consumption overridden by a 'consumption'-target formula.
+  for (const [flatId, newConsumption] of consumptionOverrides) {
+    const existing = flatConsumptions.get(flatId) ?? { totalConsumption: 0, contributions: [] };
+    flatConsumptions.set(flatId, { ...existing, totalConsumption: newConsumption });
+  }
+
+  // Step 5/6: sum, difference, and residual distribution.
+  // In grouped mode, the residual was already reconciled per-group above (against each
+  // group's own default base bills) — formulas layer on top without reopening it.
   let sumOfBaseBills = 0;
   for (const v of baseBills.values()) sumOfBaseBills = round(sumOfBaseBills + v, 2);
-  const difference = round(totalBuildingCost - sumOfBaseBills, 2);
 
-  // Step 6: distribute difference
-  const activeFlatIds = activeTenancies.map((t) => t.flatId);
-  const adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod, excludedFromResidual);
+  let difference: number;
+  let adjustments: Map<string, number>;
+
+  if (billGroups.length > 0) {
+    difference  = round(reconciledCost - sumOfBaseBills, 2);
+    adjustments = groupAdjustments;
+  } else {
+    difference = round(totalBuildingCost - sumOfBaseBills, 2);
+    const activeFlatIds = activeTenancies.map((t) => t.flatId);
+    adjustments = distributeDifference(difference, flatConsumptions, activeFlatIds, diffMethod, excludedFromResidual);
+  }
 
   // Step 7: assemble final bill results
   const flatBills: FlatBillResult[] = [];
@@ -426,7 +551,9 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     const baseBill     = baseBills.get(flatId) ?? 0;
     const adjustment   = adjustments.get(flatId) ?? 0;
     const prevBalance  = round(previousBalances[flatId] ?? 0, 2);
-    const totalDue     = round(baseBill + adjustment + prevBalance, 2);
+    const lumpSum      = round(lumpSumCharges[flatId] ?? 0, 2);
+    const ratePerUnit  = ratePerUnitByFlat.get(flatId) ?? 0;
+    const totalDue     = round(baseBill + adjustment + prevBalance + lumpSum, 2);
 
     if (consumption === 0) flatsWithZeroConsumption++;
 
@@ -434,19 +561,20 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     const primary       = contributions[0];
 
     const explanation = buildExplanation({
-      consumption, costPerUnit, baseBill, adjustment, prevBalance, totalDue,
-      diffMethod, difference, totalBuildingCost, totalBuildingConsumption,
+      consumption, costPerUnit: ratePerUnit, baseBill, adjustment, prevBalance, lumpSum, totalDue,
+      diffMethod, difference, totalBuildingCost: reconciledCost, totalBuildingConsumption: reconciledConsumption,
     });
 
     const calcLog: FlatBillCalcLog = {
-      totalBuildingCost,
-      totalBuildingConsumption,
-      costPerUnit,
+      totalBuildingCost:        reconciledCost,
+      totalBuildingConsumption: reconciledConsumption,
+      costPerUnit:              ratePerUnit,
       sumOfBaseBills,
       difference,
       diffMethod,
       meterContributions: contributions,
       explanation,
+      billGroups: groupLogsByFlat.get(flatId),
     };
 
     flatBills.push({
@@ -456,10 +584,11 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
       openingReading:       primary?.openingReading ?? null,
       closingReading:       primary?.closingReading ?? null,
       sharePercent:         primary?.sharePercent ?? 100,
-      ratePerUnit:          costPerUnit,
+      ratePerUnit,
       baseBill,
       differenceAdjustment: adjustment,
       previousBalance:      prevBalance,
+      lumpSumCharges:       lumpSum,
       totalDue,
       contributions,
       calculationLog: calcLog,
@@ -472,9 +601,9 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
   }
 
   const summary: CalculationSummary = {
-    totalBuildingCost,
-    totalBuildingConsumption,
-    costPerUnit,
+    totalBuildingCost:        reconciledCost,
+    totalBuildingConsumption: reconciledConsumption,
+    costPerUnit: calcCostPerUnit(reconciledCost, reconciledConsumption),
     sumOfBaseBills,
     difference,
     totalCalculatedDue,
@@ -493,13 +622,14 @@ function buildExplanation(params: {
   baseBill: number;
   adjustment: number;
   prevBalance: number;
+  lumpSum?: number;
   totalDue: number;
   diffMethod: DiffDistributionMethod;
   difference: number;
   totalBuildingCost: number;
   totalBuildingConsumption: number;
 }): string {
-  const { consumption, costPerUnit, baseBill, adjustment, prevBalance, totalDue, diffMethod, difference } = params;
+  const { consumption, costPerUnit, baseBill, adjustment, prevBalance, lumpSum, totalDue, diffMethod, difference } = params;
   const lines = [
     `Consumption: ${consumption} kWh`,
     `Rate: ${costPerUnit} per kWh`,
@@ -513,6 +643,9 @@ function buildExplanation(params: {
   }
   if (prevBalance > 0) {
     lines.push(`Previous unpaid balance: +${prevBalance}`);
+  }
+  if (lumpSum) {
+    lines.push(`Lump-sum charge: +${lumpSum}`);
   }
   lines.push(`Total due: ${totalDue}`);
   return lines.join('\n');

@@ -10,8 +10,10 @@ import {
   type CalculationResult,
   type DiffDistributionMethod,
   type FlatFormula,
+  type BillGroupInput,
 } from './calculationEngine';
 import { getActiveFormulasForCycle } from './formulaService';
+import { getBillLinksForCycle, findUnlinkedBills } from './companyBillService';
 
 // ─── Types returned to the UI ─────────────────────────────────────────────────
 
@@ -26,6 +28,7 @@ export interface FlatBillPreview {
   baseBill:             number;
   differenceAdjustment: number;
   previousBalance:      number;
+  lumpSumCharges:       number;
   totalDue:             number;
   status:               string;
   version:              number;
@@ -138,16 +141,54 @@ async function gatherCalculationInputs(
     }
   }
 
-  // 7. Company bill totals for this period
+  // 7. Company bills for this period — and how each is linked (meters vs. a flat lump sum)
   const { data: companyBills } = await supabase
     .from('electricity_company_bills')
-    .select('total_amount, total_units')
+    .select('id, bill_number, total_amount, total_units')
     .eq('building_id', buildingId)
     .eq('period_year',  periodYear)
     .eq('period_month', periodMonth);
 
-  const totalBuildingCost        = (companyBills ?? []).reduce((s: number, b: any) => s + Number(b.total_amount),  0);
-  const totalBuildingConsumption = (companyBills ?? []).reduce((s: number, b: any) => s + Number(b.total_units ?? 0), 0);
+  const bills = companyBills ?? [];
+  const links = await getBillLinksForCycle(buildingId, periodYear, periodMonth);
+  const linkedById = new Map(links.map((l) => [l.billId, l]));
+  const anyLinked   = links.some((l) => l.meterIds.length > 0 || l.flatId);
+
+  let totalBuildingCost        = 0;
+  let totalBuildingConsumption = 0;
+  let billGroups: BillGroupInput[] | undefined;
+  let lumpSumCharges: Record<string, number> | undefined;
+
+  if (anyLinked) {
+    // Strict mode: every bill for this cycle must be linked once a building opts in.
+    const unlinked = findUnlinkedBills(bills, links);
+    if (unlinked.length > 0) {
+      throw new Error(`The following bills are not linked to any meter or flat: ${unlinked.join(', ')}. Link every bill before calculating.`);
+    }
+
+    billGroups     = [];
+    lumpSumCharges = {};
+    for (const bill of bills) {
+      const link = linkedById.get(bill.id);
+      const cost = Number(bill.total_amount);
+      if (link?.flatId) {
+        lumpSumCharges[link.flatId] = (lumpSumCharges[link.flatId] ?? 0) + cost;
+      } else {
+        billGroups.push({
+          groupKey:         bill.id,
+          totalCost:        cost,
+          totalConsumption: Number(bill.total_units ?? 0),
+          meterIds:         link?.meterIds ?? [],
+        });
+        totalBuildingCost        += cost;
+        totalBuildingConsumption += Number(bill.total_units ?? 0);
+      }
+    }
+  } else {
+    // Legacy mode: pool every bill into one building-wide rate.
+    totalBuildingCost        = bills.reduce((s: number, b: any) => s + Number(b.total_amount),  0);
+    totalBuildingConsumption = bills.reduce((s: number, b: any) => s + Number(b.total_units ?? 0), 0);
+  }
 
   // 8. Custom formulas active for this cycle (cycle-specific takes priority over persistent)
   const formulas: Map<string, FlatFormula> = await getActiveFormulasForCycle(buildingId, cycleId);
@@ -186,6 +227,8 @@ async function gatherCalculationInputs(
     formulas,
     flatNumbers,
     excludedFromResidual,
+    billGroups,
+    lumpSumCharges,
   };
 }
 
@@ -239,7 +282,7 @@ async function persistDraftBills(
     share_percent:         bill.sharePercent,
     billed_units:          bill.consumption,
     rate_per_unit:         bill.ratePerUnit,
-    fixed_charge:          0,
+    fixed_charge:          bill.lumpSumCharges,
     current_charges:       bill.baseBill,
     difference_adjustment: bill.differenceAdjustment,
     previous_balance:      bill.previousBalance,
@@ -312,7 +355,8 @@ export async function calculateForCycle(
     return { data: null, error: (err as Error).message };
   }
 
-  if (inputs.totalBuildingCost <= 0) {
+  const hasLumpSums = Object.keys(inputs.lumpSumCharges ?? {}).length > 0;
+  if (inputs.totalBuildingCost <= 0 && !hasLumpSums) {
     return { data: null, error: 'No company bills found for this cycle. Please add electricity company bills before calculating.' };
   }
 
@@ -356,6 +400,7 @@ export async function calculateForCycle(
       baseBill:             bill.baseBill,
       differenceAdjustment: bill.differenceAdjustment,
       previousBalance:      bill.previousBalance,
+      lumpSumCharges:       bill.lumpSumCharges,
       totalDue:             bill.totalDue,
       status:               'draft',
       version:              persisted?.version ?? 1,
@@ -374,7 +419,7 @@ export async function getBillsForCycle(cycleId: string): Promise<ApiResponse<Fla
     .from('flat_bills')
     .select(`
       id, flat_id, tenancy_id, version, status,
-      units_consumed, rate_per_unit, current_charges,
+      units_consumed, rate_per_unit, current_charges, fixed_charge,
       difference_adjustment, previous_balance, total_due, calculation_log,
       excluded_from_residual,
       flat:flats(flat_number),
@@ -397,6 +442,7 @@ export async function getBillsForCycle(cycleId: string): Promise<ApiResponse<Fla
     baseBill:             Number(b.current_charges),
     differenceAdjustment: Number(b.difference_adjustment ?? 0),
     previousBalance:      Number(b.previous_balance),
+    lumpSumCharges:       Number(b.fixed_charge ?? 0),
     totalDue:             Number(b.total_due),
     status:               b.status,
     version:              b.version,

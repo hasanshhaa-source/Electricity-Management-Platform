@@ -190,6 +190,7 @@ export interface ElectricityCompanyBill {
   paid_at: string | null;
   image_url: string | null;
   notes: string | null;
+  billed_to_flat_id: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;

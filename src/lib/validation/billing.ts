@@ -36,14 +36,20 @@ export const companyBillSchema = z.object({
   bill_number:                z.string().min(1, 'Bill reference is required').max(100),
   electricity_account_number: z.string().max(100).optional().nullable(),
   total_amount:               z.coerce.number().gt(0, 'Bill amount must be greater than zero'),
-  total_units:                z.coerce.number().gt(0, 'Bill consumption must be greater than zero'),
+  // Lump-sum bills (billed_to_flat_id set) bypass consumption math, so total_units is not
+  // meaningful for them — only consumption-priced bills require it to be greater than zero.
+  total_units:                z.coerce.number().gte(0, 'Bill consumption must be 0 or greater'),
   bill_issue_date:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date').optional().nullable(),
   due_date:                   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date'),
   period_year:                z.coerce.number().int().min(2020).max(2100),
   period_month:               z.coerce.number().int().min(1).max(12),
   image_url:                  z.string().url().optional().nullable(),
   notes:                      z.string().max(1000).optional().nullable(),
-});
+  billed_to_flat_id:          z.string().uuid('Invalid flat').optional().nullable(),
+}).refine(
+  (data) => data.billed_to_flat_id != null || data.total_units > 0,
+  { message: 'Bill consumption must be greater than zero unless billed directly to a flat', path: ['total_units'] },
+);
 
 export const paymentSchema = z.object({
   bill_id:        z.string().uuid('Invalid bill'),
@@ -66,6 +72,7 @@ export const flatBillFormulaSchema = z.object({
   meter_id:     z.string().uuid('Invalid meter').optional().nullable(),
   cycle_id:     z.string().uuid('Invalid cycle').optional().nullable(),  // null = persistent, applies to every future cycle
   formula_text: z.string().min(1, 'Formula is required').max(2000),
+  formula_target: z.enum(['base_bill', 'consumption']).default('base_bill'),
 });
 
 export type FlatBillFormulaInput = z.infer<typeof flatBillFormulaSchema>;

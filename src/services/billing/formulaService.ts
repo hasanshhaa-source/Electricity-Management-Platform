@@ -5,13 +5,14 @@ import type { FlatBillFormulaInput } from '@/lib/validation/billing';
 import type { FlatFormula } from './calculationEngine';
 
 export interface FlatBillFormula {
-  id:          string;
-  flatId:      string;
-  meterId:     string | null;
-  cycleId:     string | null;
-  formulaText: string;
-  isActive:    boolean;
-  createdAt:   string;
+  id:             string;
+  flatId:         string;
+  meterId:        string | null;
+  cycleId:        string | null;
+  formulaText:    string;
+  formulaTarget:  'base_bill' | 'consumption';
+  isActive:       boolean;
+  createdAt:      string;
 }
 
 /** Dry-runs a formula against a representative dummy context to catch syntax/logic errors before saving. */
@@ -53,13 +54,14 @@ export async function upsertFlatBillFormula(
     : await existingQuery.is('cycle_id', null).maybeSingle();
 
   const row = {
-    flat_id:      input.flat_id,
-    meter_id:     input.meter_id ?? null,
-    cycle_id:     input.cycle_id ?? null,
-    formula_text: input.formula_text,
-    is_active:    true,
-    created_by:   adminId,
-    updated_at:   new Date().toISOString(),
+    flat_id:        input.flat_id,
+    meter_id:       input.meter_id ?? null,
+    cycle_id:       input.cycle_id ?? null,
+    formula_text:   input.formula_text,
+    formula_target: input.formula_target,
+    is_active:      true,
+    created_by:     adminId,
+    updated_at:     new Date().toISOString(),
   };
 
   const { data, error } = existing
@@ -70,13 +72,14 @@ export async function upsertFlatBillFormula(
 
   return {
     data: {
-      id:          data.id,
-      flatId:      data.flat_id,
-      meterId:     data.meter_id,
-      cycleId:     data.cycle_id,
-      formulaText: data.formula_text,
-      isActive:    data.is_active,
-      createdAt:   data.created_at,
+      id:            data.id,
+      flatId:        data.flat_id,
+      meterId:       data.meter_id,
+      cycleId:       data.cycle_id,
+      formulaText:   data.formula_text,
+      formulaTarget: data.formula_target,
+      isActive:      data.is_active,
+      createdAt:     data.created_at,
     },
     error: null,
   };
@@ -105,7 +108,7 @@ export async function getActiveFormulasForCycle(
 
   const { data: rows } = await supabase
     .from('flat_bill_formulas')
-    .select('flat_id, cycle_id, formula_text')
+    .select('flat_id, cycle_id, formula_text, formula_target')
     .in('flat_id', flatIds)
     .eq('is_active', true)
     .or(`cycle_id.eq.${cycleId},cycle_id.is.null`);
@@ -113,10 +116,10 @@ export async function getActiveFormulasForCycle(
   const result = new Map<string, FlatFormula>();
   // Apply persistent ones first, then let cycle-specific ones override.
   for (const r of (rows ?? []).filter((r: any) => r.cycle_id === null)) {
-    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text });
+    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
   }
   for (const r of (rows ?? []).filter((r: any) => r.cycle_id === cycleId)) {
-    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text });
+    result.set(r.flat_id, { flatId: r.flat_id, formulaText: r.formula_text, target: r.formula_target });
   }
   return result;
 }
@@ -129,7 +132,7 @@ export async function getFormulasForBuilding(buildingId: string, cycleId: string
 
   const { data, error } = await supabase
     .from('flat_bill_formulas')
-    .select('id, flat_id, meter_id, cycle_id, formula_text, is_active, created_at')
+    .select('id, flat_id, meter_id, cycle_id, formula_text, formula_target, is_active, created_at')
     .in('flat_id', flatIds)
     .eq('is_active', true)
     .or(`cycle_id.eq.${cycleId},cycle_id.is.null`);
@@ -139,7 +142,7 @@ export async function getFormulasForBuilding(buildingId: string, cycleId: string
   return {
     data: (data ?? []).map((d: any) => ({
       id: d.id, flatId: d.flat_id, meterId: d.meter_id, cycleId: d.cycle_id,
-      formulaText: d.formula_text, isActive: d.is_active, createdAt: d.created_at,
+      formulaText: d.formula_text, formulaTarget: d.formula_target, isActive: d.is_active, createdAt: d.created_at,
     })),
     error: null,
   };
