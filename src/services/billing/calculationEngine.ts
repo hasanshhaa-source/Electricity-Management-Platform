@@ -426,6 +426,12 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     }
   }
 
+  // ── Pass 1: compute default cells ──────────────────────────────────────────
+  // Everything in this pass is independent of formula results: consumption,
+  // rate_per_unit, and base_bill (plus previous_balance/lump_sum, which are
+  // pure pass-throughs from the input and don't need computation here). The
+  // outputs of this pass are the "defaults" that applyFormulas() may override.
+
   // Step 1: meter consumptions
   const meterConsumptions = calcMeterConsumptions(readings);
 
@@ -435,7 +441,7 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     }
   }
 
-  // Steps 2–6: either the single-pool model (default) or, when billGroups is supplied,
+  // Steps 2–4: either the single-pool model (default) or, when billGroups is supplied,
   // a per-bill-group model where each group reconciles independently against its own
   // company bill(s) instead of sharing one building-wide rounding/loss residual.
   let flatConsumptions:   Map<string, { totalConsumption: number; contributions: MeterContribution[] }>;
@@ -504,7 +510,10 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     groupAdjustments  = new Map(); // computed below via the single-pool path instead
   }
 
-  // Step 4b: apply any active custom formulas
+  // ── Pass 2: apply formulas ──────────────────────────────────────────────────
+  // Custom per-flat formulas may override base_bill (and redirect amounts to
+  // other flats via ALLOCATE) or override consumption directly. This is the
+  // only step that can change the default cells computed in Pass 1.
   const { baseBills, appliedFormula, formulaErrors, consumptionOverrides } = applyFormulas(
     defaultBaseBills, flatConsumptions, activeTenancies, ratePerUnitByFlat,
     previousBalances, reconciledCost, reconciledConsumption,
@@ -521,9 +530,16 @@ export function runBillingCalculation(input: CalculationInput): CalculationResul
     flatConsumptions.set(flatId, { ...existing, totalConsumption: newConsumption });
   }
 
-  // Step 5/6: sum, difference, and residual distribution.
-  // In grouped mode, the residual was already reconciled per-group above (against each
-  // group's own default base bills) — formulas layer on top without reopening it.
+  // ── Pass 3: compute adjustment / total_due ──────────────────────────────────
+  // sumOfBaseBills here is POST-formula (i.e. includes any ALLOCATE() redirects
+  // and overridden base bills from Pass 2).
+  //
+  // Grouped mode reuses `groupAdjustments`, which was computed per-group back in
+  // Pass 1 from each group's PRE-formula base bills — deliberately isolated from
+  // formula leakage so one flat's formula can't shift another group's residual.
+  // Legacy mode instead recomputes its adjustment here from the POST-formula sum,
+  // so a single flat's formula CAN shift the residual distributed to the rest of
+  // the (single, pooled) building — this asymmetry is intentional, not a bug.
   let sumOfBaseBills = 0;
   for (const v of baseBills.values()) sumOfBaseBills = round(sumOfBaseBills + v, 2);
 
