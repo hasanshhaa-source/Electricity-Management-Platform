@@ -16,6 +16,7 @@ import { ReadingsTable } from './readings-table';
 import { CompanyBillsSection } from './company-bills-section';
 import { CalculationPreview } from './calculation-preview';
 import { FormulaGrid, type ActiveFormulaInfo } from './formula-grid';
+import { SpreadsheetEditor } from './spreadsheet-editor';
 import { FieldLinkControl } from '@/components/field/field-link-control';
 import { getFormulasForBuilding } from '@/services/billing/formulaService';
 import type { CycleStatus } from '@/types';
@@ -228,20 +229,16 @@ export default async function BillingCyclePage({ params }: Props) {
         </CardContent>
       </Card>
 
-      {/* Per-cell formula spreadsheet grid + safety-net discrepancy banner */}
+      {/* New freeform spreadsheet editor — the single source of truth for billing outputs */}
       <Card>
         <CardHeader>
           <CardTitle>Spreadsheet — {periodLabel}</CardTitle>
         </CardHeader>
         <CardContent>
-          <FormulaGrid
+          <SpreadsheetEditor
             cycleId={id}
-            buildingId={cycle.building_id}
             currency={building?.currency ?? 'SAR'}
             cycleStatus={cycle.status}
-            flatBills={flatBills}
-            companyBills={bills}
-            activeFormulas={activeFormulas as any}
           />
         </CardContent>
       </Card>
