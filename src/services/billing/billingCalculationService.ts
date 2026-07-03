@@ -523,3 +523,9 @@ export async function issueBillsForCycle(
 
   return { data: { count }, error: null };
 }
+
+// ─── Seam for Sprint 4 cutover ────────────────────────────────────────────────
+// Payments, analytics, and other downstream consumers should call this instead
+// of reading from the old calculationEngine pipeline once the new sheet system
+// is live. Sprint 4 will repoint callers here and retire the old pipeline.
+export { getPublishedOutputs as getPublishedSheetOutputs } from './sheetService';
