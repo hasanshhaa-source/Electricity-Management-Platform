@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import {
   FunctionSquare, Loader2, CheckCircle2, AlertTriangle, Plus,
-  RefreshCw, Lock, Edit2, Calculator, SendHorizonal,
+  RefreshCw, Lock, Edit2, Calculator, SendHorizonal, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import type { CycleStatus } from '@/types';
 
@@ -367,6 +367,8 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
         <CellEditDialog
           cycleId={cycleId}
           cell={editing}
+          allCells={cells}
+          results={data?.results ?? {}}
           onClose={() => setEditing(null)}
           onSaved={async () => { setEditing(null); await load(); }}
         />
@@ -377,6 +379,8 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
         <NewCellDialog
           cycleId={cycleId}
           prefixHint={addingToGroup}
+          allCells={cells}
+          results={data?.results ?? {}}
           onClose={() => setAddingToGroup(null)}
           onSaved={async () => { setAddingToGroup(null); await load(); }}
         />
@@ -473,39 +477,177 @@ function GroupTable({ groupKey, label, cells, results, errors, isLocked, onEdit,
   );
 }
 
+// ─── FormulaReferencePanel ────────────────────────────────────────────────────
+
+interface FormulaReferencePanelProps {
+  allCells:     SheetCell[];
+  results:      Record<string, number>;
+  onInsert:     (name: string) => void;
+  excludeCell?: string;
+}
+
+const AGGREGATE_FUNCTIONS = [
+  { fn: "AVG_OTHER_FLATS('consumption', N)", desc: "Average consumption of all flats except flat N" },
+  { fn: "SUM_OTHER_FLATS('consumption', N)", desc: "Sum of consumption excluding flat N" },
+  { fn: "AVG_NONVACANT_FLATS('final_bill')", desc: "Average final bill among non-vacant flats" },
+  { fn: "SUM_NONVACANT_FLATS('final_bill')", desc: "Sum of final bills among non-vacant flats" },
+  { fn: "COUNT_NONVACANT_FLATS()", desc: "Number of non-vacant flats" },
+];
+
+function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: FormulaReferencePanelProps) {
+  const [open, setOpen] = useState(false);
+  const [fnOpen, setFnOpen] = useState(false);
+
+  const grouped: Record<string, SheetCell[]> = {};
+  for (const c of allCells) {
+    if (c.cell_name === excludeCell) continue;
+    const g = getGroup(c.cell_name);
+    let key: string;
+    if (g === 'flat')      key = `flat:${getFlatNumber(c.cell_name)}`;
+    else if (g === 'bill') key = `bill:${getBillNumber(c.cell_name)}`;
+    else                   key = g;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(c);
+  }
+
+  const groupOrder = (k: string) => {
+    if (k.startsWith('bill:')) return 0;
+    if (k.startsWith('flat:')) return 1;
+    if (k === 'pool')  return 2;
+    if (k === 'owner') return 3;
+    return 4;
+  };
+
+  const sortedGroups = Object.keys(grouped).sort((a, b) => {
+    const d = groupOrder(a) - groupOrder(b);
+    if (d !== 0) return d;
+    const na = parseInt(a.split(':')[1] ?? '0', 10);
+    const nb = parseInt(b.split(':')[1] ?? '0', 10);
+    return na - nb;
+  });
+
+  function groupLabel(key: string) {
+    if (key.startsWith('bill:')) return `Company Bill ${key.slice(5)}`;
+    if (key.startsWith('flat:')) return `Flat ${key.slice(5)}`;
+    if (key === 'pool')  return 'Pool';
+    if (key === 'owner') return 'Owner';
+    return 'Custom';
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 text-xs">
+      {/* Cell reference section */}
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-3 py-2 text-left font-medium text-gray-600 hover:bg-gray-50"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>📋 Available cells — click to insert</span>
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 max-h-52 overflow-y-auto divide-y divide-gray-50">
+          {sortedGroups.map((groupKey) => (
+            <div key={groupKey} className="px-3 py-1.5">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">{groupLabel(groupKey)}</p>
+              <div className="flex flex-wrap gap-1">
+                {grouped[groupKey].map((c) => (
+                  <button
+                    key={c.cell_name}
+                    type="button"
+                    title={results[c.cell_name] !== undefined ? `= ${fmt(results[c.cell_name])}` : 'no value yet'}
+                    className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 font-mono text-[11px] border border-blue-100"
+                    onClick={() => onInsert(c.cell_name)}
+                  >
+                    {c.cell_name}
+                    {results[c.cell_name] !== undefined && (
+                      <span className="text-blue-400 font-sans text-[10px]">= {fmt(results[c.cell_name])}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Aggregate functions section */}
+      <button
+        type="button"
+        className="w-full flex items-center justify-between px-3 py-2 text-left font-medium text-gray-600 hover:bg-gray-50 border-t border-gray-100"
+        onClick={() => setFnOpen((v) => !v)}
+      >
+        <span>ƒ Aggregate functions — click to insert</span>
+        {fnOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+      </button>
+
+      {fnOpen && (
+        <div className="border-t border-gray-100 divide-y divide-gray-50">
+          {AGGREGATE_FUNCTIONS.map(({ fn, desc }) => (
+            <button
+              key={fn}
+              type="button"
+              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex flex-col gap-0.5"
+              onClick={() => onInsert(fn)}
+            >
+              <code className="font-mono text-[11px] text-blue-700">{fn}</code>
+              <span className="text-gray-500 text-[11px]">{desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Shared formula save helper ───────────────────────────────────────────────
+
+async function patchCell(cycleId: string, cellName: string, mode: 'formula' | 'literal', text: string, value: string): Promise<string | null> {
+  const body: Record<string, unknown> = { cellName };
+  if (mode === 'formula') {
+    body.formulaText  = text.trim();
+    body.literalValue = null;
+  } else {
+    body.formulaText  = null;
+    body.literalValue = parseFloat(value);
+    if (isNaN(body.literalValue as number)) return 'Enter a valid number';
+  }
+  const res  = await fetch(`/api/billing/sheet/${cycleId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = await res.json();
+  if (!res.ok || json.error) return json.error ?? 'Failed to save';
+  return null;
+}
+
 // ─── CellEditDialog ───────────────────────────────────────────────────────────
 
 interface CellEditDialogProps {
   cycleId:  string;
   cell:     SheetCell;
+  allCells: SheetCell[];
+  results:  Record<string, number>;
   onClose:  () => void;
   onSaved:  () => void;
 }
 
-function CellEditDialog({ cycleId, cell, onClose, onSaved }: CellEditDialogProps) {
-  const isFormula   = !!cell.formula_text;
+function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: CellEditDialogProps) {
+  const isFormula = !!cell.formula_text;
   const [mode, setMode]   = useState<'formula' | 'literal'>(isFormula ? 'formula' : 'literal');
   const [text, setText]   = useState(cell.formula_text ?? '');
   const [value, setValue] = useState(cell.literal_value !== null ? String(cell.literal_value) : '');
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
 
+  function insertRef(name: string) {
+    setText((t) => t ? `${t} ${name}` : name);
+  }
+
   async function save() {
     setSaving(true);
     setError('');
     try {
-      const body: Record<string, unknown> = { cellName: cell.cell_name };
-      if (mode === 'formula') {
-        body.formulaText = text.trim();
-        body.literalValue = null;
-      } else {
-        body.formulaText  = null;
-        body.literalValue = parseFloat(value);
-        if (isNaN(body.literalValue as number)) { setError('Enter a valid number'); setSaving(false); return; }
-      }
-      const res  = await fetch(`/api/billing/sheet/${cycleId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const json = await res.json();
-      if (!res.ok || json.error) { setError(json.error ?? 'Failed to save'); return; }
+      const err = await patchCell(cycleId, cell.cell_name, mode, text, value);
+      if (err) { setError(err); return; }
       onSaved();
     } catch {
       setError('Network error');
@@ -516,13 +658,13 @@ function CellEditDialog({ cycleId, cell, onClose, onSaved }: CellEditDialogProps
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-mono">
             <FunctionSquare className="h-4 w-4" /> {cell.cell_name}
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center gap-4 text-sm">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="radio" checked={mode === 'formula'} onChange={() => setMode('formula')} />
@@ -536,18 +678,19 @@ function CellEditDialog({ cycleId, cell, onClose, onSaved }: CellEditDialogProps
 
           {mode === 'formula' ? (
             <>
-              <p className="text-xs text-gray-500">
-                Reference other cells by their full name (e.g. <code>flat:23:bill</code>,
-                <code>pool:rate</code>). Use arithmetic, IF(), AVG_OTHER_FLATS(),
-                SUM_NONVACANT_FLATS(), COUNT_NONVACANT_FLATS() and other sheet functions.
-              </p>
               <Textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder="e.g. flat:23:dedicated_consumption * (bill:1:cost / bill:1:consumption)"
-                rows={4}
+                placeholder="e.g. flat:23:consumption * (bill:1:cost / bill:1:consumption)"
+                rows={3}
                 className="font-mono text-sm"
                 autoFocus
+              />
+              <FormulaReferencePanel
+                allCells={allCells}
+                results={results}
+                onInsert={insertRef}
+                excludeCell={cell.cell_name}
               />
             </>
           ) : (
@@ -580,11 +723,13 @@ function CellEditDialog({ cycleId, cell, onClose, onSaved }: CellEditDialogProps
 interface NewCellDialogProps {
   cycleId:    string;
   prefixHint: string;
+  allCells:   SheetCell[];
+  results:    Record<string, number>;
   onClose:    () => void;
   onSaved:    () => void;
 }
 
-function NewCellDialog({ cycleId, prefixHint, onClose, onSaved }: NewCellDialogProps) {
+function NewCellDialog({ cycleId, prefixHint, allCells, results, onClose, onSaved }: NewCellDialogProps) {
   const [name, setName]   = useState(prefixHint);
   const [mode, setMode]   = useState<'formula' | 'literal'>('formula');
   const [text, setText]   = useState('');
@@ -592,23 +737,17 @@ function NewCellDialog({ cycleId, prefixHint, onClose, onSaved }: NewCellDialogP
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
 
+  function insertRef(ref: string) {
+    setText((t) => t ? `${t} ${ref}` : ref);
+  }
+
   async function save() {
     if (!name.trim()) { setError('Cell name is required'); return; }
     setSaving(true);
     setError('');
     try {
-      const body: Record<string, unknown> = { cellName: name.trim() };
-      if (mode === 'formula') {
-        body.formulaText  = text.trim();
-        body.literalValue = null;
-      } else {
-        body.formulaText  = null;
-        body.literalValue = parseFloat(value);
-        if (isNaN(body.literalValue as number)) { setError('Enter a valid number'); setSaving(false); return; }
-      }
-      const res  = await fetch(`/api/billing/sheet/${cycleId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const json = await res.json();
-      if (!res.ok || json.error) { setError(json.error ?? 'Failed to create cell'); return; }
+      const err = await patchCell(cycleId, name.trim(), mode, text, value);
+      if (err) { setError(err); return; }
       onSaved();
     } catch {
       setError('Network error');
@@ -619,24 +758,24 @@ function NewCellDialog({ cycleId, prefixHint, onClose, onSaved }: NewCellDialogP
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-4 w-4" /> Add Cell
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
             <label className="text-xs font-medium text-gray-600 mb-1 block">Cell name</label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. bill:1:remaining_cost or pool:discrepancy"
+              placeholder="e.g. bill:1:remaining_cost or pool:rate or flat:1A:final_bill"
               className="font-mono text-sm"
               autoFocus
             />
             <p className="text-xs text-gray-400 mt-1">
-              Use colon-delimited names: <code>flat:N:field</code>, <code>bill:N:field</code>, <code>pool:field</code>, <code>owner:field</code>.
+              Pattern: <code>flat:N:field</code> · <code>bill:N:field</code> · <code>pool:field</code> · <code>owner:field</code>
             </p>
           </div>
 
@@ -652,13 +791,20 @@ function NewCellDialog({ cycleId, prefixHint, onClose, onSaved }: NewCellDialogP
           </div>
 
           {mode === 'formula' ? (
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="e.g. bill:1:cost - flat:23:bill"
-              rows={3}
-              className="font-mono text-sm"
-            />
+            <>
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="e.g. flat:1A:consumption * pool:rate"
+                rows={3}
+                className="font-mono text-sm"
+              />
+              <FormulaReferencePanel
+                allCells={allCells}
+                results={results}
+                onInsert={insertRef}
+              />
+            </>
           ) : (
             <Input
               type="number"
