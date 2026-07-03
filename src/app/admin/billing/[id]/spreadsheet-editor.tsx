@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import {
   FunctionSquare, Loader2, CheckCircle2, AlertTriangle, Plus,
-  RefreshCw, Lock, Edit2, Trash2,
+  RefreshCw, Lock, Edit2, Calculator, SendHorizonal,
 } from 'lucide-react';
 import type { CycleStatus } from '@/types';
 
@@ -85,8 +85,13 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
   const [error, setError]       = useState('');
   const [editing, setEditing]   = useState<SheetCell | null>(null);
   const [addingToGroup, setAddingToGroup] = useState<string | null>(null); // prefix hint
-  const [publishing, setPublishing] = useState(false);
+  const [publishing, setPublishing]     = useState(false);
   const [publishError, setPublishError] = useState('');
+  const [calculating, setCalculating]   = useState(false);
+  const [calcError, setCalcError]       = useState('');
+  const [issuing, setIssuing]           = useState(false);
+  const [issueError, setIssueError]     = useState('');
+  const [calcCount, setCalcCount]       = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,6 +109,38 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
   }, [cycleId]);
 
   useEffect(() => { load(); }, [load]);
+
+  async function calculateBills() {
+    setCalculating(true);
+    setCalcError('');
+    setCalcCount(null);
+    try {
+      const res  = await fetch(`/api/billing/sheet/${cycleId}/calculate`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || json.error) { setCalcError(json.error ?? 'Calculation failed'); return; }
+      setCalcCount(json.data?.count ?? 0);
+    } catch {
+      setCalcError('Network error');
+    } finally {
+      setCalculating(false);
+    }
+  }
+
+  async function issueBills() {
+    if (!confirm('Issue all draft bills? Tenants will be able to see them. This cannot be undone.')) return;
+    setIssuing(true);
+    setIssueError('');
+    try {
+      const res  = await fetch(`/api/billing/cycles/${cycleId}/issue`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || json.error) { setIssueError(json.error ?? 'Issue failed'); return; }
+      await load();
+    } catch {
+      setIssueError('Network error');
+    } finally {
+      setIssuing(false);
+    }
+  }
 
   async function publish() {
     setPublishing(true);
@@ -227,6 +264,34 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
 
       {publishError && (
         <Alert variant="destructive"><AlertDescription>{publishError}</AlertDescription></Alert>
+      )}
+
+      {/* Calculate from sheet + Issue Bills — shown after publishing */}
+      {isPublished && !isLocked && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+          <p className="text-sm font-medium text-gray-700">Generate &amp; Issue Bills</p>
+          <p className="text-xs text-gray-500">
+            Step 1: Calculate creates draft bills from the published sheet outputs.
+            Step 2: Issue makes them visible to tenants.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" onClick={calculateBills} disabled={calculating || issuing}>
+              {calculating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Calculator className="h-4 w-4 mr-1" />}
+              Calculate Bills from Sheet
+            </Button>
+            <Button size="sm" variant="outline" onClick={issueBills} disabled={issuing || calculating || calcCount === null}>
+              {issuing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <SendHorizonal className="h-4 w-4 mr-1" />}
+              Issue Bills
+            </Button>
+            {calcCount !== null && (
+              <span className="text-xs text-green-600 flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5" /> {calcCount} draft bill{calcCount !== 1 ? 's' : ''} created — ready to issue.
+              </span>
+            )}
+          </div>
+          {calcError  && <Alert variant="destructive"><AlertDescription>{calcError}</AlertDescription></Alert>}
+          {issueError && <Alert variant="destructive"><AlertDescription>{issueError}</AlertDescription></Alert>}
+        </div>
       )}
 
       {/* Safety-net discrepancy banner */}

@@ -422,6 +422,141 @@ export async function publishSheet(sheetId: string): Promise<ApiResponse<null>> 
   return { data: null, error: null };
 }
 
+/**
+ * Reads a published sheet's per-flat output cells and writes them as flat_bills rows
+ * (same table payments/tenant modules read), replacing the old calculateForCycle pipeline
+ * as the source of billing numbers. Advances cycle status to 'calculated'.
+ * The admin then calls the existing /issue endpoint to promote draft → unpaid.
+ */
+export async function calculateFromSheet(
+  cycleId:  string,
+  adminId:  string,
+): Promise<ApiResponse<{ count: number }>> {
+  const supabase = await createClient();
+
+  // Require a published sheet
+  const { data: sheetRow, error: sheetErr } = await supabase
+    .from('cycle_sheets')
+    .select('id, published_at')
+    .eq('cycle_id', cycleId)
+    .single();
+  if (sheetErr || !sheetRow) return { data: null, error: 'No sheet found for this cycle' };
+  if (!sheetRow.published_at) return { data: null, error: 'Publish the sheet before calculating bills' };
+
+  // Fetch all cells
+  const { data: cells, error: cellsErr } = await supabase
+    .from('sheet_cells')
+    .select('cell_name, computed_value, literal_value')
+    .eq('sheet_id', sheetRow.id);
+  if (cellsErr || !cells) return { data: null, error: cellsErr?.message ?? 'Failed to fetch sheet cells' };
+
+  const cellMap = new Map(cells.map((c) => [c.cell_name, c.computed_value ?? c.literal_value]));
+
+  // Collect all flat numbers that have a final_bill cell
+  const flatNums = new Set<string>();
+  for (const [name] of cellMap) {
+    const m = /^flat:([^:]+):final_bill$/.exec(name);
+    if (m) flatNums.add(m[1]);
+  }
+  if (flatNums.size === 0) return { data: null, error: 'No flat:N:final_bill output cells found in sheet. Add them before calculating.' };
+
+  // Load cycle + building metadata
+  const { data: cycle } = await supabase
+    .from('billing_cycles')
+    .select('building_id, period_year, period_month, building:buildings(billing_day)')
+    .eq('id', cycleId)
+    .single();
+  if (!cycle) return { data: null, error: 'Billing cycle not found' };
+
+  const billingDay = (cycle.building as any)?.billing_day ?? 15;
+  const dueMonth   = cycle.period_month === 12 ? 1 : cycle.period_month + 1;
+  const dueYear    = cycle.period_month === 12 ? cycle.period_year + 1 : cycle.period_year;
+  const dueDate    = `${dueYear}-${String(dueMonth).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
+  const now        = new Date().toISOString();
+
+  // Map flat_number → flat_id + active tenancy
+  const { data: flats } = await supabase
+    .from('flats')
+    .select('id, flat_number')
+    .eq('building_id', cycle.building_id)
+    .in('flat_number', [...flatNums]);
+  const flatByNumber = new Map((flats ?? []).map((f: any) => [String(f.flat_number), f.id as string]));
+
+  const flatIds = [...flatByNumber.values()];
+  const { data: tenancies } = await supabase
+    .from('tenancies')
+    .select('id, flat_id')
+    .in('flat_id', flatIds)
+    .eq('status', 'active');
+  const tenancyByFlatId = new Map((tenancies ?? []).map((t: any) => [t.flat_id as string, t.id as string]));
+
+  // Determine next version (retire previous draft bills for this cycle)
+  const { data: existingBills } = await supabase
+    .from('flat_bills')
+    .select('version')
+    .eq('billing_cycle_id', cycleId)
+    .order('version', { ascending: false })
+    .limit(1);
+  const nextVersion = ((existingBills?.[0] as any)?.version ?? 0) + 1;
+
+  // Retire any existing current-version bills
+  await supabase
+    .from('flat_bills')
+    .update({ is_current_version: false })
+    .eq('billing_cycle_id', cycleId)
+    .eq('is_current_version', true)
+    .eq('status', 'draft');
+
+  // Build and insert new draft bill rows from sheet outputs
+  const rows: Record<string, unknown>[] = [];
+  for (const flatNum of flatNums) {
+    const flatId    = flatByNumber.get(flatNum);
+    const tenancyId = flatId ? tenancyByFlatId.get(flatId) : undefined;
+    if (!flatId || !tenancyId) continue; // no active tenancy for this flat — skip
+
+    const get = (field: string) => Number(cellMap.get(`flat:${flatNum}:${field}`) ?? 0);
+    rows.push({
+      billing_cycle_id:       cycleId,
+      flat_id:                flatId,
+      tenancy_id:             tenancyId,
+      version:                nextVersion,
+      is_current_version:     true,
+      opening_reading:        get('previous_reading'),
+      closing_reading:        get('current_reading'),
+      units_consumed:         get('consumption'),
+      share_percent:          100,
+      billed_units:           get('consumption'),
+      rate_per_unit:          cellMap.get('pool:rate') ? Number(cellMap.get('pool:rate')) : 0,
+      fixed_charge:           get('lump_sum'),
+      current_charges:        get('bill'),
+      difference_adjustment:  get('adjustment'),
+      previous_balance:       get('previous_balance'),
+      total_due:              get('final_bill'),
+      amount_paid:            0,
+      status:                 'draft',
+      due_date:               dueDate,
+      excluded_from_residual: false,
+      calculation_log:        { source: 'sheet', sheetId: sheetRow.id, calculatedAt: now, calculatedBy: adminId },
+      calculated_by:          adminId,
+      calculated_at:          now,
+    });
+  }
+
+  if (rows.length === 0) return { data: null, error: 'No matching active tenancies found for sheet flat numbers' };
+
+  const { error: insertErr } = await supabase.from('flat_bills').insert(rows);
+  if (insertErr) return { data: null, error: insertErr.message };
+
+  // Advance cycle status to 'calculated'
+  await supabase
+    .from('billing_cycles')
+    .update({ status: 'calculated' })
+    .eq('id', cycleId)
+    .in('status', ['draft', 'readings_collected', 'bills_imported']);
+
+  return { data: { count: rows.length }, error: null };
+}
+
 /** Saves a formula into the building-level template for carry-forward to future cycles. */
 export async function saveFormulaTemplate(
   buildingId:  string,

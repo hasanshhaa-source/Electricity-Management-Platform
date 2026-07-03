@@ -4,7 +4,6 @@ import { requireAdmin } from '@/services/auth/authService';
 import { getCycleById, getCycleReadingStats } from '@/services/billing/cycleService';
 import { getReadingRowsForCycle } from '@/services/billing/readingService';
 import { getBillsForCycle, getBillLinksForCycle } from '@/services/billing/companyBillService';
-import { getBillsForCycle as getFlatBillsForCycle } from '@/services/billing/billingCalculationService';
 import { getMetersByBuilding } from '@/services/meter/meterService';
 import { getFlatsByBuilding } from '@/services/building/buildingService';
 import { PageHeader } from '@/components/shared/page-header';
@@ -14,11 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, Building2, Calendar, CheckCircle2, Circle } from 'lucide-react';
 import { ReadingsTable } from './readings-table';
 import { CompanyBillsSection } from './company-bills-section';
-import { CalculationPreview } from './calculation-preview';
-import { FormulaGrid, type ActiveFormulaInfo } from './formula-grid';
 import { SpreadsheetEditor } from './spreadsheet-editor';
 import { FieldLinkControl } from '@/components/field/field-link-control';
-import { getFormulasForBuilding } from '@/services/billing/formulaService';
 import type { CycleStatus } from '@/types';
 
 type Props = { params: Promise<{ id: string }> };
@@ -56,32 +52,17 @@ export default async function BillingCyclePage({ params }: Props) {
   const building = cycle.building as any;
   const { totalMeters, readingsEntered } = statsResult;
 
-  const [rowsResult, billsResult, flatBillsResult, metersResult, flatsResult, billLinks, formulasResult] = await Promise.all([
+  const [rowsResult, billsResult, metersResult, flatsResult, billLinks] = await Promise.all([
     getReadingRowsForCycle(cycle.building_id, cycle.period_year, cycle.period_month, id),
     getBillsForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
-    getFlatBillsForCycle(id),
     getMetersByBuilding(cycle.building_id),
     getFlatsByBuilding(cycle.building_id),
     getBillLinksForCycle(cycle.building_id, cycle.period_year, cycle.period_month),
-    getFormulasForBuilding(cycle.building_id, id),
   ]);
-  const rows      = rowsResult.data      ?? [];
-  const bills     = billsResult.data     ?? [];
-  const flatBills = flatBillsResult.data ?? [];
-  const meters    = metersResult.data    ?? [];
-  const flats     = flatsResult.data     ?? [];
-  const formulas  = formulasResult.data  ?? [];
-
-  // Shape into flatId -> column -> active formula info for the grid (cycle-specific
-  // formulas for THIS cycle take priority over persistent ones for the same cell).
-  const activeFormulas: Record<string, Partial<Record<string, ActiveFormulaInfo>>> = {};
-  for (const f of [...formulas].sort((a) => (a.cycleId === null ? -1 : 1))) {
-    activeFormulas[f.flatId] = activeFormulas[f.flatId] ?? {};
-    activeFormulas[f.flatId][f.formulaTarget] = {
-      formulaText: f.formulaText,
-      scope: f.cycleId ? 'one-off' : 'persistent',
-    };
-  }
+  const rows  = rowsResult.data  ?? [];
+  const bills = billsResult.data ?? [];
+  const meters = metersResult.data ?? [];
+  const flats  = flatsResult.data  ?? [];
 
   const periodLabel = `${MONTH_NAMES[cycle.period_month - 1]} ${cycle.period_year}`;
   const currentStep = STATUS_ORDER[cycle.status] ?? 0;
@@ -214,22 +195,7 @@ export default async function BillingCyclePage({ params }: Props) {
         </CardContent>
       </Card>
 
-      {/* Billing calculation & issuance */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Bill Calculation — {periodLabel}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <CalculationPreview
-            cycleId={id}
-            currency={building?.currency ?? 'SAR'}
-            cycleStatus={cycle.status}
-            initialBills={flatBills}
-          />
-        </CardContent>
-      </Card>
-
-      {/* New freeform spreadsheet editor — the single source of truth for billing outputs */}
+      {/* Freeform spreadsheet editor — the single source of truth for billing outputs */}
       <Card>
         <CardHeader>
           <CardTitle>Spreadsheet — {periodLabel}</CardTitle>
