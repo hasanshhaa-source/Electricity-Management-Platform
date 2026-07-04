@@ -350,4 +350,43 @@ describe('sheetEngine', () => {
       expect(grandTotal).toBeCloseTo(values['bill:1:cost'] + values['bill:2:cost'], 9);
     });
   });
+
+  describe('multi-flat exclusion', () => {
+    it('AVG_OTHER_FLATS excludes multiple flat numbers', () => {
+      const sheet: Sheet = {
+        'flat:1:consumption':  lit(100),
+        'flat:2:consumption':  lit(0),   // secondary / zeroed-out
+        'flat:3:consumption':  lit(0),   // secondary / zeroed-out
+        'flat:4:consumption':  lit(200),
+        'flat:16:consumption': formula("AVG_OTHER_FLATS('consumption', 2, 3, 16)"),
+      };
+      // Only flats 1 and 4 are included; avg = (100 + 200) / 2 = 150
+      const { values } = evaluateSheet(sheet);
+      expect(values['flat:16:consumption']).toBe(150);
+    });
+
+    it('SUM_OTHER_FLATS excludes multiple flat numbers', () => {
+      const sheet: Sheet = {
+        'flat:1:consumption': lit(100),
+        'flat:2:consumption': lit(0),
+        'flat:3:consumption': lit(50),
+        'flat:4:consumption': lit(200),
+        'flat:5:consumption': formula("SUM_OTHER_FLATS('consumption', 2, 5)"),
+      };
+      // Flats 1, 3, 4 included; sum = 350
+      const { values } = evaluateSheet(sheet);
+      expect(values['flat:5:consumption']).toBe(350);
+    });
+
+    it('single exclusion still works after refactor', () => {
+      const sheet: Sheet = {
+        'flat:1:consumption': lit(100),
+        'flat:2:consumption': lit(200),
+        'flat:3:consumption': formula("AVG_OTHER_FLATS('consumption', 3)"),
+      };
+      // Only flats 1 and 2; avg = 150
+      const { values } = evaluateSheet(sheet);
+      expect(values['flat:3:consumption']).toBe(150);
+    });
+  });
 });

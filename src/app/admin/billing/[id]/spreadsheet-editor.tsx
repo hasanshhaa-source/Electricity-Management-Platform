@@ -501,8 +501,8 @@ interface FormulaReferencePanelProps {
 }
 
 const AGGREGATE_FUNCTIONS = [
-  { fn: "AVG_OTHER_FLATS('consumption', N)", desc: "Average consumption of all flats except flat N" },
-  { fn: "SUM_OTHER_FLATS('consumption', N)", desc: "Sum of consumption excluding flat N" },
+  { fn: "AVG_OTHER_FLATS('consumption', N, N2, ...)", desc: "Average consumption of all flats except the listed flat numbers" },
+  { fn: "SUM_OTHER_FLATS('consumption', N, N2, ...)", desc: "Sum of consumption excluding the listed flat numbers" },
   { fn: "AVG_NONVACANT_FLATS('final_bill')", desc: "Average final bill among non-vacant flats" },
   { fn: "SUM_NONVACANT_FLATS('final_bill')", desc: "Sum of final bills among non-vacant flats" },
   { fn: "COUNT_NONVACANT_FLATS()", desc: "Number of non-vacant flats" },

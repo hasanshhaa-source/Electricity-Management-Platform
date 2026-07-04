@@ -321,11 +321,11 @@ function extractDependencies(node: Node, sheet: Sheet): Set<CellName> {
           const fieldArg = n.args[0];
           const hasFieldArg = fnName !== 'COUNT_NONVACANT_FLATS';
           const field = hasFieldArg && fieldArg?.kind === 'string' ? fieldArg.value : null;
-          const excludeArgNode = hasFieldArg ? n.args[1] : n.args[0];
-          const excludeFlat = excludeArgNode ? String(literalNumericValue(excludeArgNode)) : null;
+          const excludeArgNodes = hasFieldArg ? n.args.slice(1) : n.args;
+          const excludeFlats = new Set(excludeArgNodes.map((a) => String(literalNumericValue(a))));
 
           for (const flatNumber of getAllFlatNumbers(sheet)) {
-            if (excludeFlat !== null && flatNumber === excludeFlat) continue;
+            if (excludeFlats.has(flatNumber)) continue;
             if (field && `flat:${flatNumber}:${field}` in sheet) deps.add(`flat:${flatNumber}:${field}`);
             if (fnName.includes('NONVACANT') && `flat:${flatNumber}:vacant` in sheet) deps.add(`flat:${flatNumber}:vacant`);
           }
@@ -448,24 +448,21 @@ function evalNode(n: Node, currentCell: CellName, state: EvalState): number {
 function evalAggregate(fnName: string, args: Node[], currentCell: CellName, state: EvalState): number {
   const hasFieldArg = fnName !== 'COUNT_NONVACANT_FLATS';
   let field = '';
-  let excludeArgNode: Node;
 
+  let excludeArgNodes: Node[];
   if (hasFieldArg) {
-    if (args.length !== 2 || args[0].kind !== 'string') {
-      throw new SheetEngineError(`${fnName}() takes exactly 2 arguments: ${fnName}('field', excludeFlatNumber)`);
+    if (args.length < 1 || args[0].kind !== 'string') {
+      throw new SheetEngineError(`${fnName}() requires a field name as first argument: ${fnName}('field', ...excludeFlats)`);
     }
     field = (args[0] as { kind: 'string'; value: string }).value;
-    excludeArgNode = args[1];
+    excludeArgNodes = args.slice(1);
   } else {
-    if (args.length !== 1) {
-      throw new SheetEngineError(`${fnName}() takes exactly 1 argument: ${fnName}(excludeFlatNumber)`);
-    }
-    excludeArgNode = args[0];
+    excludeArgNodes = args;
   }
-  const excludeFlat = String(literalNumericValue(excludeArgNode));
+  const excludeFlats = new Set(excludeArgNodes.map((a) => String(literalNumericValue(a))));
 
   const wantsNonVacant = fnName.includes('NONVACANT');
-  const flatNumbers = getAllFlatNumbers(state.sheet).filter((fn) => fn !== excludeFlat);
+  const flatNumbers = getAllFlatNumbers(state.sheet).filter((fn) => !excludeFlats.has(fn));
 
   const matched: string[] = [];
   for (const flatNumber of flatNumbers) {
