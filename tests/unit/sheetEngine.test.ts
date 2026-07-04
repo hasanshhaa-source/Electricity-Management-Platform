@@ -378,6 +378,19 @@ describe('sheetEngine', () => {
       expect(values['flat:5:consumption']).toBe(350);
     });
 
+    it('accepts quoted string flat ids for alphanumeric flat numbers', () => {
+      const sheet: Sheet = {
+        'flat:4b:consumption':  lit(0),
+        'flat:10a:consumption': lit(0),
+        'flat:1:consumption':   lit(100),
+        'flat:2:consumption':   lit(200),
+        'flat:16:consumption':  formula("AVG_OTHER_FLATS('consumption', '4b', '10a', 16)"),
+      };
+      // Only flats 1 and 2 included; avg = 150
+      const { values } = evaluateSheet(sheet);
+      expect(values['flat:16:consumption']).toBe(150);
+    });
+
     it('single exclusion still works after refactor', () => {
       const sheet: Sheet = {
         'flat:1:consumption': lit(100),

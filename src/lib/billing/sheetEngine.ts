@@ -322,7 +322,7 @@ function extractDependencies(node: Node, sheet: Sheet): Set<CellName> {
           const hasFieldArg = fnName !== 'COUNT_NONVACANT_FLATS';
           const field = hasFieldArg && fieldArg?.kind === 'string' ? fieldArg.value : null;
           const excludeArgNodes = hasFieldArg ? n.args.slice(1) : n.args;
-          const excludeFlats = new Set(excludeArgNodes.map((a) => String(literalNumericValue(a))));
+          const excludeFlats = new Set(excludeArgNodes.map((a) => extractFlatId(a)));
 
           for (const flatNumber of getAllFlatNumbers(sheet)) {
             if (excludeFlats.has(flatNumber)) continue;
@@ -346,6 +346,19 @@ function literalNumericValue(n: Node): number {
   if (n.kind === 'number') return n.value;
   if (n.kind === 'unary' && n.op === '-' && n.operand.kind === 'number') return -n.operand.value;
   throw new SheetEngineError('Expected a numeric literal argument');
+}
+
+/**
+ * Extracts a flat-number identifier from an exclusion argument node.
+ * Accepts numeric literals (16 → "16") or quoted strings ('4b' → "4b").
+ * Use this for AVG_OTHER_FLATS/SUM_OTHER_FLATS exclusion args so that
+ * alphanumeric flat numbers like 4b, 10A can be expressed as '4b', '10A'.
+ */
+function extractFlatId(n: Node): string {
+  if (n.kind === 'number') return String(n.value);
+  if (n.kind === 'unary' && n.op === '-' && n.operand.kind === 'number') return String(-n.operand.value);
+  if (n.kind === 'string') return n.value;
+  throw new SheetEngineError("Expected a flat number or quoted flat id (e.g. 16 or '4b')");
 }
 
 // ─── Evaluation ─────────────────────────────────────────────────────────────────
@@ -459,7 +472,7 @@ function evalAggregate(fnName: string, args: Node[], currentCell: CellName, stat
   } else {
     excludeArgNodes = args;
   }
-  const excludeFlats = new Set(excludeArgNodes.map((a) => String(literalNumericValue(a))));
+  const excludeFlats = new Set(excludeArgNodes.map((a) => extractFlatId(a)));
 
   const wantsNonVacant = fnName.includes('NONVACANT');
   const flatNumbers = getAllFlatNumbers(state.sheet).filter((fn) => !excludeFlats.has(fn));
