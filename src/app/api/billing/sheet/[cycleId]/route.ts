@@ -88,7 +88,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: evalResult.error ?? 'Evaluation failed' }, { status: 500 });
     }
 
-    return NextResponse.json({ data: { results: evalResult.data.results, errors: evalResult.data.errors } });
+    // Return updated cells alongside results so the client can update state without a second GET
+    const sb = await (await import('@/lib/supabase/server')).createClient();
+    const { data: cells } = await sb
+      .from('sheet_cells')
+      .select('id, cell_name, formula_text, literal_value, computed_value, is_input, display_order')
+      .eq('sheet_id', sheetId)
+      .order('display_order', { ascending: true, nullsFirst: false });
+
+    return NextResponse.json({ data: { cells: cells ?? [], results: evalResult.data.results, errors: evalResult.data.errors } });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'Unexpected error' }, { status: 500 });
   }

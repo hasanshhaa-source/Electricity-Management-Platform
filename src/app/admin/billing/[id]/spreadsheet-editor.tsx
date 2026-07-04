@@ -370,7 +370,14 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           allCells={cells}
           results={data?.results ?? {}}
           onClose={() => setEditing(null)}
-          onSaved={async () => { setEditing(null); await load(); }}
+          onSaved={(patch) => {
+            setEditing(null);
+            if (patch.cells && patch.results && patch.errors !== undefined) {
+              setData((prev) => prev ? { ...prev, cells: patch.cells!, results: patch.results!, errors: patch.errors! } : prev);
+            } else {
+              load();
+            }
+          }}
         />
       )}
 
@@ -382,7 +389,14 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           allCells={cells}
           results={data?.results ?? {}}
           onClose={() => setAddingToGroup(null)}
-          onSaved={async () => { setAddingToGroup(null); await load(); }}
+          onSaved={(patch) => {
+            setAddingToGroup(null);
+            if (patch.cells && patch.results && patch.errors !== undefined) {
+              setData((prev) => prev ? { ...prev, cells: patch.cells!, results: patch.results!, errors: patch.errors! } : prev);
+            } else {
+              load();
+            }
+          }}
         />
       )}
     </div>
@@ -603,7 +617,14 @@ function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: For
 
 // ─── Shared formula save helper ───────────────────────────────────────────────
 
-async function patchCell(cycleId: string, cellName: string, mode: 'formula' | 'literal', text: string, value: string): Promise<string | null> {
+interface PatchResult {
+  error: string | null;
+  cells?: SheetCell[];
+  results?: Record<string, number>;
+  errors?: Record<string, string>;
+}
+
+async function patchCell(cycleId: string, cellName: string, mode: 'formula' | 'literal', text: string, value: string): Promise<PatchResult> {
   const body: Record<string, unknown> = { cellName };
   if (mode === 'formula') {
     body.formulaText  = text.trim();
@@ -611,12 +632,12 @@ async function patchCell(cycleId: string, cellName: string, mode: 'formula' | 'l
   } else {
     body.formulaText  = null;
     body.literalValue = parseFloat(value);
-    if (isNaN(body.literalValue as number)) return 'Enter a valid number';
+    if (isNaN(body.literalValue as number)) return { error: 'Enter a valid number' };
   }
   const res  = await fetch(`/api/billing/sheet/${cycleId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const json = await res.json();
-  if (!res.ok || json.error) return json.error ?? 'Failed to save';
-  return null;
+  if (!res.ok || json.error) return { error: json.error ?? 'Failed to save' };
+  return { error: null, cells: json.data?.cells, results: json.data?.results, errors: json.data?.errors };
 }
 
 // ─── CellEditDialog ───────────────────────────────────────────────────────────
@@ -627,7 +648,7 @@ interface CellEditDialogProps {
   allCells: SheetCell[];
   results:  Record<string, number>;
   onClose:  () => void;
-  onSaved:  () => void;
+  onSaved:  (patch: PatchResult) => void;
 }
 
 function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: CellEditDialogProps) {
@@ -646,9 +667,9 @@ function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: 
     setSaving(true);
     setError('');
     try {
-      const err = await patchCell(cycleId, cell.cell_name, mode, text, value);
-      if (err) { setError(err); return; }
-      onSaved();
+      const result = await patchCell(cycleId, cell.cell_name, mode, text, value);
+      if (result.error) { setError(result.error); return; }
+      onSaved(result);
     } catch {
       setError('Network error');
     } finally {
@@ -726,7 +747,7 @@ interface NewCellDialogProps {
   allCells:   SheetCell[];
   results:    Record<string, number>;
   onClose:    () => void;
-  onSaved:    () => void;
+  onSaved:    (patch: PatchResult) => void;
 }
 
 function NewCellDialog({ cycleId, prefixHint, allCells, results, onClose, onSaved }: NewCellDialogProps) {
@@ -746,9 +767,9 @@ function NewCellDialog({ cycleId, prefixHint, allCells, results, onClose, onSave
     setSaving(true);
     setError('');
     try {
-      const err = await patchCell(cycleId, name.trim(), mode, text, value);
-      if (err) { setError(err); return; }
-      onSaved();
+      const result = await patchCell(cycleId, name.trim(), mode, text, value);
+      if (result.error) { setError(result.error); return; }
+      onSaved(result);
     } catch {
       setError('Network error');
     } finally {
