@@ -49,6 +49,18 @@ function buildSheet(cells: SheetCellRow[]): Sheet {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Returns just the sheet id for a cycle — much cheaper than getOrCreateCycleSheet when cells aren't needed. */
+export async function getSheetIdForCycle(cycleId: string): Promise<ApiResponse<string>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('cycle_sheets')
+    .select('id')
+    .eq('cycle_id', cycleId)
+    .single();
+  if (error || !data) return { data: null, error: error?.message ?? 'Sheet not found' };
+  return { data: data.id, error: null };
+}
+
 /**
  * Finds or creates the cycle_sheets row for this cycle.
  * Returns the sheet metadata + all sheet_cells rows (unsorted, sorted by display_order
@@ -333,13 +345,14 @@ export async function evaluateCycleSheet(
     // Partial results already collected above — proceed
   }
 
-  // Persist computed_value back to DB
+  // Persist computed_value back to DB in a single batch upsert
+  const now = new Date().toISOString();
   const updates = cellRows
     .filter((c) => results[c.cell_name] !== undefined)
-    .map((c) => ({ id: c.id, computed_value: results[c.cell_name], updated_at: new Date().toISOString() }));
+    .map((c) => ({ id: c.id, sheet_id: sheetId, cell_name: c.cell_name, computed_value: results[c.cell_name], updated_at: now }));
 
-  for (const upd of updates) {
-    await supabase.from('sheet_cells').update({ computed_value: upd.computed_value, updated_at: upd.updated_at }).eq('id', upd.id);
+  if (updates.length > 0) {
+    await supabase.from('sheet_cells').upsert(updates, { onConflict: 'id' });
   }
 
   return { data: { results, errors }, error: null };
