@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import {
   FunctionSquare, Loader2, CheckCircle2, AlertTriangle, Plus,
-  RefreshCw, Lock, Edit2, Calculator, SendHorizonal, ChevronDown, ChevronRight,
+  RefreshCw, Lock, Edit2, Calculator, SendHorizonal, ChevronDown, ChevronRight, Trash2,
 } from 'lucide-react';
 import type { CycleStatus } from '@/types';
 
@@ -348,6 +348,14 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
               isLocked={isLocked || isPublished}
               onEdit={(c) => setEditing(c)}
               onAddCell={() => setAddingToGroup(groupKey + ':')}
+              onDelete={async (cellName) => {
+                if (!confirm(`Delete cell "${cellName}"? This cannot be undone.`)) return;
+                const res  = await fetch(`/api/billing/sheet/${cycleId}/cell`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cellName }) });
+                const json = await res.json();
+                if (res.ok && json.data) {
+                  setData((prev) => prev ? { ...prev, cells: json.data.cells, results: json.data.results, errors: json.data.errors } : prev);
+                }
+              }}
             />
           ))}
 
@@ -414,9 +422,10 @@ interface GroupTableProps {
   isLocked: boolean;
   onEdit:   (c: SheetCell) => void;
   onAddCell: () => void;
+  onDelete: (cellName: string) => void;
 }
 
-function GroupTable({ groupKey, label, cells, results, errors, isLocked, onEdit, onAddCell }: GroupTableProps) {
+function GroupTable({ groupKey, label, cells, results, errors, isLocked, onEdit, onAddCell, onDelete }: GroupTableProps) {
   const sortedCells = [...cells].sort((a, b) =>
     (a.display_order ?? 9999) - (b.display_order ?? 9999) || a.cell_name.localeCompare(b.cell_name),
   );
@@ -476,9 +485,14 @@ function GroupTable({ groupKey, label, cells, results, errors, isLocked, onEdit,
                   </TableCell>
                   {!isLocked && (
                     <TableCell className="py-2 text-right">
-                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => onEdit(c)}>
-                        <Edit2 className="h-3 w-3 text-gray-400" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => onEdit(c)}>
+                          <Edit2 className="h-3 w-3 text-gray-400" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:text-red-500" onClick={() => onDelete(c.cell_name)}>
+                          <Trash2 className="h-3 w-3 text-gray-300 hover:text-red-500" />
+                        </Button>
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
