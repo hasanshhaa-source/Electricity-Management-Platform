@@ -43,7 +43,7 @@ export const companyBillSchema = z.object({
   due_date:                   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date'),
   period_year:                z.coerce.number().int().min(2020).max(2100),
   period_month:               z.coerce.number().int().min(1).max(12),
-  image_url:                  z.string().url().optional().nullable(),
+  image_url:                  z.string().url().optional().nullable().or(z.literal('')).transform((v) => v === '' ? null : v),
   notes:                      z.string().max(1000).optional().nullable(),
   billed_to_flat_id:          z.string().uuid('Invalid flat').optional().nullable(),
 }).refine(
@@ -58,7 +58,7 @@ export const paymentSchema = z.object({
   payment_method: z.enum(['cash', 'bank_transfer', 'stc_pay', 'online', 'other']),
   reference_no:   z.string().max(200).optional().nullable(),
   notes:          z.string().max(1000).optional().nullable(),
-  image_url:      z.string().url().optional().nullable(),
+  image_url:      z.string().url().optional().nullable().or(z.literal('')).transform((v) => v === '' ? null : v),
 });
 
 export type PaymentInput    = z.infer<typeof paymentSchema>;
