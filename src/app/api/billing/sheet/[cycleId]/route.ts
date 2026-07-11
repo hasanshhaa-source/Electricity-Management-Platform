@@ -28,10 +28,31 @@ export async function GET(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: sheetResult.error ?? 'Failed to get sheet' }, { status: 500 });
     }
 
-    // Auto-populate if empty (no-op if already populated)
+    // Auto-populate if empty (no-op if already populated — bill sync handled below)
     await autoPopulateSheet(cycleId, cycle.building_id, cycle.period_year, cycle.period_month);
 
     const sheetId = sheetResult.data.sheet.id;
+
+    // Always sync company bill cells so they appear in the reference panel even if bills
+    // were imported after the sheet was first created. Query by building + period directly.
+    {
+      const { createClient: mkClient } = await import('@/lib/supabase/server');
+      const sb = await mkClient();
+      const { data: bills } = await sb
+        .from('electricity_company_bills')
+        .select('bill_number, total_amount, total_units')
+        .eq('building_id', cycle.building_id)
+        .eq('period_year', cycle.period_year)
+        .eq('period_month', cycle.period_month)
+        .is('deleted_at', null);
+      if (bills && bills.length > 0) {
+        const billCells = bills.flatMap((b: any) => [
+          { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:cost`,        literal_value: Number(b.total_amount), formula_text: null, computed_value: null, is_input: true },
+          { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:consumption`, literal_value: Number(b.total_units),  formula_text: null, computed_value: null, is_input: true },
+        ]);
+        await sb.from('sheet_cells').upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+      }
+    }
 
     // Evaluate (persists computed_value back to DB)
     const evalResult = await evaluateCycleSheet(sheetId);
