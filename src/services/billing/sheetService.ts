@@ -116,12 +116,12 @@ export async function autoPopulateSheet(
   if (sheetErr || !sheetRow) return { data: null, error: sheetErr?.message ?? 'Sheet not found' };
   const sheetId = sheetRow.id;
 
-  // No-op guard: if any cells exist, don't overwrite
+  // Check if this sheet already has cells (to decide whether to run full population)
   const { count } = await supabase
     .from('sheet_cells')
     .select('id', { count: 'exact', head: true })
     .eq('sheet_id', sheetId);
-  if ((count ?? 0) > 0) return { data: null, error: null };
+  const sheetAlreadyHasCells = (count ?? 0) > 0;
 
   // ── Fetch raw data ─────────────────────────────────────────────────────────
 
@@ -146,6 +146,22 @@ export async function autoPopulateSheet(
   ]);
 
   const meterIds = (meters ?? []).map((m: any) => m.id);
+
+  // Always sync bill cells from the company bills table (even if sheet already has cells).
+  // This ensures bill:N:cost / bill:N:consumption appear in the reference panel after bills
+  // are imported, without the admin having to re-create the sheet.
+  if (sheetAlreadyHasCells) {
+    const billCells = (bills ?? []).flatMap((bill: any) => [
+      { sheet_id: sheetId, cell_name: `bill:${bill.bill_number}:cost`,        literal_value: Number(bill.total_amount), formula_text: null, computed_value: null, is_input: true },
+      { sheet_id: sheetId, cell_name: `bill:${bill.bill_number}:consumption`, literal_value: Number(bill.total_units),  formula_text: null, computed_value: null, is_input: true },
+    ]);
+    if (billCells.length > 0) {
+      await supabase
+        .from('sheet_cells')
+        .upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+    }
+    return { data: null, error: null };
+  }
 
   // Re-fetch readings with proper meter id filter
   const [{ data: currR }, { data: prevR }] = await Promise.all([
