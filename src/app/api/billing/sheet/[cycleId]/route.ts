@@ -33,33 +33,42 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
     const sheetId = sheetResult.data.sheet.id;
 
-    // Always sync company bill cells so they appear in the reference panel even if bills
-    // were imported after the sheet was first created. Query by building + period directly.
+    // Always sync company bill cells so they appear in the reference panel.
+    // Query by cycle_id first (most specific), fall back to building + period.
     {
       const { createClient: mkClient } = await import('@/lib/supabase/server');
       const sb = await mkClient();
-      const { data: bills } = await sb
+      let { data: bills } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
-        .eq('building_id', cycle.building_id)
-        .eq('period_year', cycle.period_year)
-        .eq('period_month', cycle.period_month)
+        .eq('cycle_id', cycleId)
         .is('deleted_at', null);
+      // Fallback: match by building + period (bills imported without a cycle link)
+      if (!bills || bills.length === 0) {
+        const { data: fallbackBills } = await sb
+          .from('electricity_company_bills')
+          .select('bill_number, total_amount, total_units')
+          .eq('building_id', cycle.building_id)
+          .eq('period_year', cycle.period_year)
+          .eq('period_month', cycle.period_month)
+          .is('deleted_at', null);
+        bills = fallbackBills;
+      }
       if (bills && bills.length > 0) {
-        // Always sync raw bill input cells (update values if bill was edited)
+        // Sync raw bill input cells (always update so edited bill values are reflected)
         const billCells = bills.flatMap((b: any) => [
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:cost`,        literal_value: Number(b.total_amount), formula_text: null, computed_value: null, is_input: true },
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:consumption`, literal_value: Number(b.total_units),  formula_text: null, computed_value: null, is_input: true },
         ]);
         await sb.from('sheet_cells').upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
 
-        // Insert pool summary cells only if they don't already exist (never overwrite customisations)
+        // Upsert pool summary formula cells (always keep formula in sync with actual bill list)
         const billNums = bills.map((b: any) => b.bill_number);
         const poolCells = [
           { sheet_id: sheetId, cell_name: 'pool:total_cost',        formula_text: billNums.map((n: string) => `bill:${n}:cost`).join(' + '),        literal_value: null, computed_value: null, is_input: false },
           { sheet_id: sheetId, cell_name: 'pool:total_consumption', formula_text: billNums.map((n: string) => `bill:${n}:consumption`).join(' + '), literal_value: null, computed_value: null, is_input: false },
         ];
-        await sb.from('sheet_cells').upsert(poolCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: true });
+        await sb.from('sheet_cells').upsert(poolCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
       }
     }
 
