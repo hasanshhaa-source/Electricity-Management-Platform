@@ -36,8 +36,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // Always sync company bill cells so they appear in the reference panel.
     // Query by cycle_id first (most specific), fall back to building + period.
     {
-      const { createClient: mkClient } = await import('@/lib/supabase/server');
-      const sb = await mkClient();
+      const { createAdminClient } = await import('@/lib/supabase/server');
+      const sb = await createAdminClient();
       let { data: bills } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
@@ -60,7 +60,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:cost`,        literal_value: Number(b.total_amount), formula_text: null, computed_value: null, is_input: true },
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:consumption`, literal_value: Number(b.total_units),  formula_text: null, computed_value: null, is_input: true },
         ]);
-        await sb.from('sheet_cells').upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+        const { error: billUpsertErr } = await sb.from('sheet_cells').upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+        if (billUpsertErr) return NextResponse.json({ error: `Failed to sync bill cells: ${billUpsertErr.message}` }, { status: 500 });
 
         // Upsert pool summary formula cells (always keep formula in sync with actual bill list)
         const billNums = bills.map((b: any) => b.bill_number);
@@ -68,7 +69,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
           { sheet_id: sheetId, cell_name: 'pool:total_cost',        formula_text: billNums.map((n: string) => `bill:${n}:cost`).join(' + '),        literal_value: null, computed_value: null, is_input: false },
           { sheet_id: sheetId, cell_name: 'pool:total_consumption', formula_text: billNums.map((n: string) => `bill:${n}:consumption`).join(' + '), literal_value: null, computed_value: null, is_input: false },
         ];
-        await sb.from('sheet_cells').upsert(poolCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+        const { error: poolUpsertErr } = await sb.from('sheet_cells').upsert(poolCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+        if (poolUpsertErr) return NextResponse.json({ error: `Failed to sync pool cells: ${poolUpsertErr.message}` }, { status: 500 });
       }
     }
 
