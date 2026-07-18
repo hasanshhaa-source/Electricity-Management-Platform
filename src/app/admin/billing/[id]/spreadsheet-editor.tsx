@@ -33,11 +33,18 @@ interface SheetRow {
   published_at: string | null;
 }
 
+interface CompanyBill {
+  bill_number:  string;
+  total_amount: number;
+  total_units:  number;
+}
+
 interface SheetData {
-  sheet:   SheetRow;
-  cells:   SheetCell[];
-  results: Record<string, number>;
-  errors:  Record<string, string>;
+  sheet:        SheetRow;
+  cells:        SheetCell[];
+  results:      Record<string, number>;
+  errors:       Record<string, string>;
+  companyBills: CompanyBill[];
 }
 
 interface SpreadsheetEditorProps {
@@ -377,6 +384,7 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           cell={editing}
           allCells={cells}
           results={data?.results ?? {}}
+          companyBills={data?.companyBills ?? []}
           onClose={() => setEditing(null)}
           onSaved={(patch) => {
             setEditing(null);
@@ -396,6 +404,7 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           prefixHint={addingToGroup}
           allCells={cells}
           results={data?.results ?? {}}
+          companyBills={data?.companyBills ?? []}
           onClose={() => setAddingToGroup(null)}
           onSaved={(patch) => {
             setAddingToGroup(null);
@@ -510,6 +519,7 @@ function GroupTable({ groupKey, label, cells, results, errors, isLocked, onEdit,
 interface FormulaReferencePanelProps {
   allCells:     SheetCell[];
   results:      Record<string, number>;
+  companyBills: CompanyBill[];
   onInsert:     (name: string) => void;
   excludeCell?: string;
 }
@@ -522,26 +532,50 @@ const AGGREGATE_FUNCTIONS = [
   { fn: "COUNT_NONVACANT_FLATS()", desc: "Number of non-vacant flats" },
 ];
 
-function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: FormulaReferencePanelProps) {
-  const [open, setOpen] = useState(false);
+function FormulaReferencePanel({ allCells, results, companyBills, onInsert, excludeCell }: FormulaReferencePanelProps) {
+  const [open, setOpen] = useState(true);
   const [fnOpen, setFnOpen] = useState(false);
 
-  const grouped: Record<string, SheetCell[]> = {};
-  for (const c of allCells) {
-    if (c.cell_name === excludeCell) continue;
-    const g = getGroup(c.cell_name);
+  // Build virtual bill + pool cells from companyBills (always shown regardless of sheet state)
+  const billCellNames = companyBills.flatMap((b) => [
+    `bill:${b.bill_number}:cost`,
+    `bill:${b.bill_number}:consumption`,
+  ]);
+  const poolCellNames = companyBills.length > 0 ? ['pool:total_cost', 'pool:total_consumption'] : [];
+  const virtualNames = new Set([...billCellNames, ...poolCellNames]);
+
+  // Merge sheet cells with virtual bill/pool cells (virtual ones shown even if not yet in sheet)
+  const allCellNames = new Set(allCells.map((c) => c.cell_name));
+  const virtualExtras: { cell_name: string; value?: number }[] = [];
+  for (const name of virtualNames) {
+    if (!allCellNames.has(name)) {
+      const b = companyBills.find((b) => name === `bill:${b.bill_number}:cost` || name === `bill:${b.bill_number}:consumption`);
+      const value = b
+        ? name.endsWith(':cost') ? b.total_amount : b.total_units
+        : undefined;
+      virtualExtras.push({ cell_name: name, value });
+    }
+  }
+
+  const grouped: Record<string, { cell_name: string; value?: number }[]> = {};
+  const addToGroup = (cellName: string, value?: number) => {
+    if (cellName === excludeCell) return;
+    const g = getGroup(cellName);
     let key: string;
-    if (g === 'flat')      key = `flat:${getFlatNumber(c.cell_name)}`;
-    else if (g === 'bill') key = `bill:${getBillNumber(c.cell_name)}`;
+    if (g === 'flat')      key = `flat:${getFlatNumber(cellName)}`;
+    else if (g === 'bill') key = `bill:${getBillNumber(cellName)}`;
     else                   key = g;
     if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(c);
-  }
+    grouped[key].push({ cell_name: cellName, value });
+  };
+
+  for (const c of allCells) addToGroup(c.cell_name, results[c.cell_name]);
+  for (const v of virtualExtras) addToGroup(v.cell_name, v.value);
 
   const groupOrder = (k: string) => {
     if (k.startsWith('bill:')) return 0;
-    if (k.startsWith('flat:')) return 1;
-    if (k === 'pool')  return 2;
+    if (k === 'pool')  return 1;
+    if (k.startsWith('flat:')) return 2;
     if (k === 'owner') return 3;
     return 4;
   };
@@ -549,15 +583,13 @@ function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: For
   const sortedGroups = Object.keys(grouped).sort((a, b) => {
     const d = groupOrder(a) - groupOrder(b);
     if (d !== 0) return d;
-    const na = parseInt(a.split(':')[1] ?? '0', 10);
-    const nb = parseInt(b.split(':')[1] ?? '0', 10);
-    return na - nb;
+    return a.localeCompare(b);
   });
 
   function groupLabel(key: string) {
-    if (key.startsWith('bill:')) return `Company Bill ${key.slice(5)}`;
+    if (key.startsWith('bill:')) return `Company Bill — ${key.slice(5)}`;
+    if (key === 'pool')  return 'Pool Totals';
     if (key.startsWith('flat:')) return `Flat ${key.slice(5)}`;
-    if (key === 'pool')  return 'Pool';
     if (key === 'owner') return 'Owner';
     return 'Custom';
   }
@@ -575,7 +607,7 @@ function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: For
       </button>
 
       {open && (
-        <div className="border-t border-gray-100 max-h-52 overflow-y-auto divide-y divide-gray-50">
+        <div className="border-t border-gray-100 max-h-64 overflow-y-auto divide-y divide-gray-50">
           {sortedGroups.map((groupKey) => (
             <div key={groupKey} className="px-3 py-1.5">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">{groupLabel(groupKey)}</p>
@@ -584,13 +616,13 @@ function FormulaReferencePanel({ allCells, results, onInsert, excludeCell }: For
                   <button
                     key={c.cell_name}
                     type="button"
-                    title={results[c.cell_name] !== undefined ? `= ${fmt(results[c.cell_name])}` : 'no value yet'}
+                    title={c.value !== undefined ? `= ${fmt(c.value)}` : 'no value yet'}
                     className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 font-mono text-[11px] border border-blue-100"
                     onClick={() => onInsert(c.cell_name)}
                   >
                     {c.cell_name}
-                    {results[c.cell_name] !== undefined && (
-                      <span className="text-blue-400 font-sans text-[10px]">= {fmt(results[c.cell_name])}</span>
+                    {c.value !== undefined && (
+                      <span className="text-blue-400 font-sans text-[10px]">= {fmt(c.value)}</span>
                     )}
                   </button>
                 ))}
@@ -657,15 +689,16 @@ async function patchCell(cycleId: string, cellName: string, mode: 'formula' | 'l
 // ─── CellEditDialog ───────────────────────────────────────────────────────────
 
 interface CellEditDialogProps {
-  cycleId:  string;
-  cell:     SheetCell;
-  allCells: SheetCell[];
-  results:  Record<string, number>;
-  onClose:  () => void;
-  onSaved:  (patch: PatchResult) => void;
+  cycleId:     string;
+  cell:        SheetCell;
+  allCells:    SheetCell[];
+  results:     Record<string, number>;
+  companyBills: CompanyBill[];
+  onClose:     () => void;
+  onSaved:     (patch: PatchResult) => void;
 }
 
-function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: CellEditDialogProps) {
+function CellEditDialog({ cycleId, cell, allCells, results, companyBills, onClose, onSaved }: CellEditDialogProps) {
   const isFormula = !!cell.formula_text;
   const [mode, setMode]   = useState<'formula' | 'literal'>(isFormula ? 'formula' : 'literal');
   const [text, setText]   = useState(cell.formula_text ?? '');
@@ -724,6 +757,7 @@ function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: 
               <FormulaReferencePanel
                 allCells={allCells}
                 results={results}
+                companyBills={companyBills}
                 onInsert={insertRef}
                 excludeCell={cell.cell_name}
               />
@@ -756,15 +790,16 @@ function CellEditDialog({ cycleId, cell, allCells, results, onClose, onSaved }: 
 // ─── NewCellDialog ────────────────────────────────────────────────────────────
 
 interface NewCellDialogProps {
-  cycleId:    string;
-  prefixHint: string;
-  allCells:   SheetCell[];
-  results:    Record<string, number>;
-  onClose:    () => void;
-  onSaved:    (patch: PatchResult) => void;
+  cycleId:     string;
+  prefixHint:  string;
+  allCells:    SheetCell[];
+  results:     Record<string, number>;
+  companyBills: CompanyBill[];
+  onClose:     () => void;
+  onSaved:     (patch: PatchResult) => void;
 }
 
-function NewCellDialog({ cycleId, prefixHint, allCells, results, onClose, onSaved }: NewCellDialogProps) {
+function NewCellDialog({ cycleId, prefixHint, allCells, results, companyBills, onClose, onSaved }: NewCellDialogProps) {
   const [name, setName]   = useState(prefixHint);
   const [mode, setMode]   = useState<'formula' | 'literal'>('formula');
   const [text, setText]   = useState('');
@@ -837,6 +872,7 @@ function NewCellDialog({ cycleId, prefixHint, allCells, results, onClose, onSave
               <FormulaReferencePanel
                 allCells={allCells}
                 results={results}
+                companyBills={companyBills}
                 onInsert={insertRef}
               />
             </>
