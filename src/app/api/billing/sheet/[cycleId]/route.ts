@@ -46,11 +46,20 @@ export async function GET(_req: NextRequest, { params }: Params) {
         .eq('period_month', cycle.period_month)
         .is('deleted_at', null);
       if (bills && bills.length > 0) {
+        // Always sync raw bill input cells (update values if bill was edited)
         const billCells = bills.flatMap((b: any) => [
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:cost`,        literal_value: Number(b.total_amount), formula_text: null, computed_value: null, is_input: true },
           { sheet_id: sheetId, cell_name: `bill:${b.bill_number}:consumption`, literal_value: Number(b.total_units),  formula_text: null, computed_value: null, is_input: true },
         ]);
         await sb.from('sheet_cells').upsert(billCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: false });
+
+        // Insert pool summary cells only if they don't already exist (never overwrite customisations)
+        const billNums = bills.map((b: any) => b.bill_number);
+        const poolCells = [
+          { sheet_id: sheetId, cell_name: 'pool:total_cost',        formula_text: billNums.map((n: string) => `bill:${n}:cost`).join(' + '),        literal_value: null, computed_value: null, is_input: false },
+          { sheet_id: sheetId, cell_name: 'pool:total_consumption', formula_text: billNums.map((n: string) => `bill:${n}:consumption`).join(' + '), literal_value: null, computed_value: null, is_input: false },
+        ];
+        await sb.from('sheet_cells').upsert(poolCells, { onConflict: 'sheet_id,cell_name', ignoreDuplicates: true });
       }
     }
 
