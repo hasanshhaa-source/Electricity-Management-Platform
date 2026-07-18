@@ -38,13 +38,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
     {
       const { createClient: mkClient } = await import('@/lib/supabase/server');
       const sb = await mkClient();
-      const { data: bills } = await sb
+      const { data: bills, error: billsErr } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
         .eq('building_id', cycle.building_id)
         .eq('period_year', cycle.period_year)
         .eq('period_month', cycle.period_month)
         .is('deleted_at', null);
+      console.log('[sheet GET] bill sync:', { building_id: cycle.building_id, period_year: cycle.period_year, period_month: cycle.period_month, bills, billsErr, sheetId });
       if (bills && bills.length > 0) {
         // Always sync raw bill input cells (update values if bill was edited)
         const billCells = bills.flatMap((b: any) => [
