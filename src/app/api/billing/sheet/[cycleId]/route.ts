@@ -37,8 +37,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // The frontend uses this to always show bill cells in the reference panel.
     let companyBills: { bill_number: string; total_amount: number; total_units: number }[] = [];
     {
-      const { createAdminClient } = await import('@/lib/supabase/server');
-      const sb = await createAdminClient();
+      const { createClient: mkClient } = await import('@/lib/supabase/server');
+      const sb = await mkClient();
       let { data: bills } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
