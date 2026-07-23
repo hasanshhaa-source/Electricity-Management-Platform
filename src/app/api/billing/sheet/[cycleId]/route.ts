@@ -59,6 +59,30 @@ export async function GET(_req: NextRequest, { params }: Params) {
         total_amount: Number(b.total_amount),
         total_units:  Number(b.total_units),
       }));
+
+      // Ensure bill input cells and pool formula cells exist in the sheet.
+      // Uses upsertCell (same path as manual cell saves) so it's guaranteed to work.
+      if (companyBills.length > 0) {
+        const billNums = companyBills.map((b) => b.bill_number);
+        const cellsToEnsure: { name: string; literalValue?: number; formulaText?: string }[] = [
+          ...companyBills.flatMap((b) => [
+            { name: `bill:${b.bill_number}:cost`,        literalValue: b.total_amount },
+            { name: `bill:${b.bill_number}:consumption`, literalValue: b.total_units },
+          ]),
+          { name: 'pool:total_cost',        formulaText: billNums.map((n) => `bill:${n}:cost`).join(' + ') },
+          { name: 'pool:total_consumption', formulaText: billNums.map((n) => `bill:${n}:consumption`).join(' + ') },
+        ];
+        // Only create cells that don't already exist
+        const existingCells = sheetResult.data.cells.map((c) => c.cell_name);
+        for (const cell of cellsToEnsure) {
+          if (!existingCells.includes(cell.name)) {
+            await upsertCell(sheetId, cell.name, {
+              formulaText:  cell.formulaText ?? null,
+              literalValue: cell.literalValue ?? null,
+            });
+          }
+        }
+      }
     }
 
     // Evaluate (persists computed_value back to DB)
