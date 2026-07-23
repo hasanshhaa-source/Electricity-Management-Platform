@@ -44,6 +44,33 @@ function buildSheet(cells: SheetCellRow[]): Sheet {
     }
     // cells with neither are placeholders — skip (engine will report unknown-ref if referenced)
   }
+
+  // Auto-inject pool totals from bill cells so formulas like pool:total_cost always resolve.
+  // This works even when the pool cells were never persisted to sheet_cells.
+  const billCostKeys = Object.keys(sheet).filter((k) => /^bill:[^:]+:cost$/.test(k));
+  const billConsKeys = Object.keys(sheet).filter((k) => /^bill:[^:]+:consumption$/.test(k));
+
+  // If bill cells exist but have literal values (not formulas), compute pool totals directly
+  // so there's no circular-formula risk.
+  if (billCostKeys.length > 0 && !sheet['pool:total_cost']) {
+    const allLiteral = billCostKeys.every((k) => sheet[k].kind === 'literal');
+    if (allLiteral) {
+      const total = billCostKeys.reduce((s, k) => s + (sheet[k] as any).value, 0);
+      sheet['pool:total_cost'] = lit(total);
+    } else {
+      sheet['pool:total_cost'] = fml(billCostKeys.join(' + '));
+    }
+  }
+  if (billConsKeys.length > 0 && !sheet['pool:total_consumption']) {
+    const allLiteral = billConsKeys.every((k) => sheet[k].kind === 'literal');
+    if (allLiteral) {
+      const total = billConsKeys.reduce((s, k) => s + (sheet[k] as any).value, 0);
+      sheet['pool:total_consumption'] = lit(total);
+    } else {
+      sheet['pool:total_consumption'] = fml(billConsKeys.join(' + '));
+    }
+  }
+
   return sheet;
 }
 
