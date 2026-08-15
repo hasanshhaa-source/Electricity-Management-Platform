@@ -42,7 +42,7 @@ function buildSheet(cells: SheetCellRow[]): Sheet {
     } else if (c.literal_value !== null) {
       sheet[c.cell_name] = lit(Number(c.literal_value));
     }
-    // cells with neither are placeholders — skip (engine will report unknown-ref if referenced)
+    // cells with neither are placeholders — skip
   }
   return sheet;
 }
@@ -63,15 +63,13 @@ export async function getSheetIdForCycle(cycleId: string): Promise<ApiResponse<s
 
 /**
  * Finds or creates the cycle_sheets row for this cycle.
- * Returns the sheet metadata + all sheet_cells rows (unsorted, sorted by display_order
- * can be done client-side).
+ * Returns the sheet metadata + all sheet_cells rows.
  */
 export async function getOrCreateCycleSheet(
   cycleId: string,
 ): Promise<ApiResponse<{ sheet: CycleSheetRow; cells: SheetCellRow[] }>> {
   const supabase = await createClient();
 
-  // Upsert the sheet row (noop if already exists)
   const { error: upsertErr } = await supabase
     .from('cycle_sheets')
     .upsert({ cycle_id: cycleId }, { onConflict: 'cycle_id', ignoreDuplicates: true });
@@ -96,8 +94,7 @@ export async function getOrCreateCycleSheet(
 
 /**
  * Auto-populates a fresh sheet with raw input cells derived from meter readings,
- * company bills, and the building's saved formula template. No-ops if any cells
- * already exist for this sheet (never clobbers existing admin edits).
+ * company bills, and the building's saved formula template.
  */
 export async function autoPopulateSheet(
   cycleId:     string,
@@ -107,7 +104,6 @@ export async function autoPopulateSheet(
 ): Promise<ApiResponse<null>> {
   const supabase = await createClient();
 
-  // Resolve sheet id
   const { data: sheetRow, error: sheetErr } = await supabase
     .from('cycle_sheets')
     .select('id')
@@ -116,14 +112,11 @@ export async function autoPopulateSheet(
   if (sheetErr || !sheetRow) return { data: null, error: sheetErr?.message ?? 'Sheet not found' };
   const sheetId = sheetRow.id;
 
-  // Check if this sheet already has cells (to decide whether to run full population)
   const { count } = await supabase
     .from('sheet_cells')
     .select('id', { count: 'exact', head: true })
     .eq('sheet_id', sheetId);
   const sheetAlreadyHasCells = (count ?? 0) > 0;
-
-  // ── Fetch raw data ─────────────────────────────────────────────────────────
 
   const { year: prevYear, month: prevMonth } = prevPeriod(periodYear, periodMonth);
 
@@ -147,9 +140,6 @@ export async function autoPopulateSheet(
 
   const meterIds = (meters ?? []).map((m: any) => m.id);
 
-  // Always sync bill cells from the company bills table (even if sheet already has cells).
-  // This ensures bill:N:cost / bill:N:consumption appear in the reference panel after bills
-  // are imported, without the admin having to re-create the sheet.
   if (sheetAlreadyHasCells) {
     const billCells = (bills ?? []).flatMap((bill: any) => [
       { sheet_id: sheetId, cell_name: `bill:${bill.bill_number}:cost`,        literal_value: Number(bill.total_amount), formula_text: null, computed_value: null, is_input: true },
@@ -163,13 +153,11 @@ export async function autoPopulateSheet(
     return { data: null, error: null };
   }
 
-  // Re-fetch readings with proper meter id filter
   const [{ data: currR }, { data: prevR }] = await Promise.all([
     supabase.from('meter_readings').select('meter_id, reading_value').in('meter_id', meterIds).eq('billing_period_year', periodYear).eq('billing_period_month', periodMonth),
     supabase.from('meter_readings').select('meter_id, reading_value').in('meter_id', meterIds).eq('billing_period_year', prevYear).eq('billing_period_month', prevMonth),
   ]);
 
-  // Fallback: for meters missing an exact prior-month reading, find most recent historical
   const prevMap = new Map((prevR ?? []).map((r: any) => [r.meter_id, Number(r.reading_value)]));
   const missingMeterIds = meterIds.filter((id) => !prevMap.has(id));
   if (missingMeterIds.length > 0) {
@@ -189,13 +177,10 @@ export async function autoPopulateSheet(
   const currMap = new Map((currR ?? []).map((r: any) => [r.meter_id, Number(r.reading_value)]));
   const activeFlatIds = new Set((tenancies ?? []).map((t: any) => t.flat_id));
 
-  // ── Build per-flat consumption from assignments ────────────────────────────
-
-  // flat_id → { consumption, prevReading, currReading }
   const flatConsumption = new Map<string, { consumption: number; prev: number | null; curr: number | null }>();
   for (const asgn of assignments ?? []) {
     const curr = currMap.get(asgn.meter_id);
-    if (curr === undefined) continue; // no reading this cycle — skip meter
+    if (curr === undefined) continue;
     const prev = prevMap.get(asgn.meter_id) ?? null;
     const delta = prev !== null ? Math.max(0, curr - prev) : 0;
     const share = Number(asgn.share_percent) / 100;
@@ -206,8 +191,6 @@ export async function autoPopulateSheet(
       flatConsumption.set(asgn.flat_id, { consumption: delta * share, prev, curr });
     }
   }
-
-  // ── Build input cells ──────────────────────────────────────────────────────
 
   const flatNumberById = new Map((flats ?? []).map((f: any) => [f.id, String(f.flat_number)]));
   const inputCells: Omit<SheetCellRow, 'id'>[] = [];
@@ -230,8 +213,6 @@ export async function autoPopulateSheet(
     inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  computed_value: null, is_input: true, display_order: displayOrder++ });
   }
 
-  // ── Fetch building formula template and insert formula cells ─────────────
-
   const { data: templateRows } = await supabase
     .from('sheet_cell_formulas')
     .select('cell_name, formula_text')
@@ -246,7 +227,6 @@ export async function autoPopulateSheet(
     display_order:  displayOrder++,
   }));
 
-  // If no template exists yet, insert minimal placeholder pool formulas
   if (templateCells.length === 0 && (bills ?? []).length > 0) {
     const billNums = (bills ?? []).map((b: any) => b.bill_number);
     const poolCostFormula  = billNums.map((n: string) => `bill:${n}:cost`).join(' + ');
@@ -265,8 +245,6 @@ export async function autoPopulateSheet(
       );
     }
   }
-
-  // ── Persist all cells ──────────────────────────────────────────────────────
 
   const allCells = [...inputCells, ...templateCells].map((c) => ({ ...c, sheet_id: sheetId }));
   if (allCells.length > 0) {
@@ -339,22 +317,26 @@ export async function evaluateCycleSheet(
 
   const sheet = buildSheet(cellRows);
 
-  // Always inject live company bill data as literal cells.
-  // This guarantees pool:total_cost / pool:total_consumption always resolve, even when
-  // formula cells exist for those names but their bill:N:cost dependencies are missing.
-  // Override any existing formula cells unconditionally — literals win at evaluation time.
-  {
-    const { data: sheetRow } = await supabase
-      .from('cycle_sheets')
-      .select('cycle_id')
-      .eq('id', sheetId)
-      .single();
+  // Inject pool:total_cost and pool:total_consumption as literal values.
+  // Strategy 1 (preferred): compute directly from bill:N:cost/consumption rows already
+  // loaded above — zero extra queries, no RLS exposure, always deterministic.
+  // Strategy 2 (fallback): fetch live from electricity_company_bills if no bill literal
+  // cells exist in the sheet yet (sheet loaded before bills were imported).
+  const billCostRows = cellRows.filter(c => /^bill:[^:]+:cost$/.test(c.cell_name) && c.literal_value !== null);
+  const billConsRows = cellRows.filter(c => /^bill:[^:]+:consumption$/.test(c.cell_name) && c.literal_value !== null);
+
+  if (billCostRows.length > 0) {
+    // Force bill cells to be literals (guards against them being formula cells in edge cases)
+    for (const c of billCostRows) sheet[c.cell_name] = lit(Number(c.literal_value));
+    for (const c of billConsRows) sheet[c.cell_name] = lit(Number(c.literal_value));
+    sheet['pool:total_cost']        = lit(billCostRows.reduce((s, c) => s + Number(c.literal_value), 0));
+    sheet['pool:total_consumption'] = lit(billConsRows.reduce((s, c) => s + Number(c.literal_value), 0));
+  } else {
+    // Fallback: no bill literal cells loaded — fetch from DB
+    const { data: sheetRow } = await supabase.from('cycle_sheets').select('cycle_id').eq('id', sheetId).single();
     if (sheetRow?.cycle_id) {
       const { data: cycleRow } = await supabase
-        .from('billing_cycles')
-        .select('building_id, period_year, period_month')
-        .eq('id', sheetRow.cycle_id)
-        .single();
+        .from('billing_cycles').select('building_id, period_year, period_month').eq('id', sheetRow.cycle_id).single();
       if (cycleRow) {
         const { data: bills } = await supabase
           .from('electricity_company_bills')
@@ -364,14 +346,12 @@ export async function evaluateCycleSheet(
           .eq('period_month', cycleRow.period_month)
           .is('deleted_at', null);
         if (bills && bills.length > 0) {
-          const totalCost  = bills.reduce((s: number, b: any) => s + Number(b.total_amount), 0);
-          const totalUnits = bills.reduce((s: number, b: any) => s + Number(b.total_units),  0);
           for (const b of bills) {
             sheet[`bill:${b.bill_number}:cost`]        = lit(Number(b.total_amount));
             sheet[`bill:${b.bill_number}:consumption`] = lit(Number(b.total_units));
           }
-          sheet['pool:total_cost']        = lit(totalCost);
-          sheet['pool:total_consumption'] = lit(totalUnits);
+          sheet['pool:total_cost']        = lit(bills.reduce((s: number, b: any) => s + Number(b.total_amount), 0));
+          sheet['pool:total_consumption'] = lit(bills.reduce((s: number, b: any) => s + Number(b.total_units),  0));
         }
       }
     }
@@ -380,7 +360,7 @@ export async function evaluateCycleSheet(
   const results: Record<string, number> = {};
   const errors:  Record<string, string> = {};
 
-  // Evaluate each cell independently so one error doesn't block all others
+  // Evaluate each cell independently so one failure doesn't block others
   for (const name of Object.keys(sheet)) {
     try {
       const { values } = evaluateSheet({ [name]: sheet[name], ...sheet });
@@ -390,7 +370,7 @@ export async function evaluateCycleSheet(
     }
   }
 
-  // Full evaluation pass to ensure all cells are resolved together (handles cross-deps)
+  // Full pass to catch any remaining cross-cell dependencies
   try {
     const { values } = evaluateSheet(sheet);
     for (const [k, v] of Object.entries(values)) results[k] = v;
@@ -413,9 +393,7 @@ export async function evaluateCycleSheet(
 
 /**
  * Returns the published billing outputs (per-flat consumption + final bill) for use
- * by payments, analytics, and any other downstream consumer. Only works if the sheet
- * has been published (published_at IS NOT NULL) and all required output cells have
- * computed_value set.
+ * by payments, analytics, and any other downstream consumer.
  */
 export async function getPublishedOutputs(
   cycleId: string,
@@ -436,14 +414,12 @@ export async function getPublishedOutputs(
     .eq('sheet_id', sheetRow.id);
   if (cellsErr || !cells) return { data: null, error: cellsErr?.message ?? 'Failed to fetch cells' };
 
-  // Collect flat numbers from output cells
   const flatNums = new Set<string>();
   for (const c of cells) {
     const m = /^flat:([^:]+):final_bill$/.exec(c.cell_name);
     if (m) flatNums.add(m[1]);
   }
 
-  // Map flat_number → flat_id via DB
   const { data: flats } = await supabase
     .from('flats')
     .select('id, flat_number')
@@ -469,7 +445,6 @@ export async function getPublishedOutputs(
 export async function publishSheet(sheetId: string): Promise<ApiResponse<null>> {
   const supabase = await createClient();
 
-  // Validate all output cells have computed values
   const { data: cells } = await supabase
     .from('sheet_cells')
     .select('cell_name, computed_value')
@@ -489,10 +464,8 @@ export async function publishSheet(sheetId: string): Promise<ApiResponse<null>> 
 }
 
 /**
- * Reads a published sheet's per-flat output cells and writes them as flat_bills rows
- * (same table payments/tenant modules read), replacing the old calculateForCycle pipeline
- * as the source of billing numbers. Advances cycle status to 'calculated'.
- * The admin then calls the existing /issue endpoint to promote draft → unpaid.
+ * Reads a published sheet's per-flat output cells and writes them as flat_bills rows.
+ * Advances cycle status to 'calculated'.
  */
 export async function calculateFromSheet(
   cycleId:  string,
@@ -500,7 +473,6 @@ export async function calculateFromSheet(
 ): Promise<ApiResponse<{ count: number }>> {
   const supabase = await createClient();
 
-  // Require a published sheet
   const { data: sheetRow, error: sheetErr } = await supabase
     .from('cycle_sheets')
     .select('id, published_at')
@@ -509,7 +481,6 @@ export async function calculateFromSheet(
   if (sheetErr || !sheetRow) return { data: null, error: 'No sheet found for this cycle' };
   if (!sheetRow.published_at) return { data: null, error: 'Publish the sheet before calculating bills' };
 
-  // Fetch all cells
   const { data: cells, error: cellsErr } = await supabase
     .from('sheet_cells')
     .select('cell_name, computed_value, literal_value')
@@ -518,7 +489,6 @@ export async function calculateFromSheet(
 
   const cellMap = new Map(cells.map((c) => [c.cell_name, c.computed_value ?? c.literal_value]));
 
-  // Collect all flat numbers that have a final_bill cell
   const flatNums = new Set<string>();
   for (const [name] of cellMap) {
     const m = /^flat:([^:]+):final_bill$/.exec(name);
@@ -526,7 +496,6 @@ export async function calculateFromSheet(
   }
   if (flatNums.size === 0) return { data: null, error: 'No flat:N:final_bill output cells found in sheet. Add them before calculating.' };
 
-  // Load cycle + building metadata
   const { data: cycle } = await supabase
     .from('billing_cycles')
     .select('building_id, period_year, period_month, building:buildings(billing_day)')
@@ -540,7 +509,6 @@ export async function calculateFromSheet(
   const dueDate    = `${dueYear}-${String(dueMonth).padStart(2, '0')}-${String(billingDay).padStart(2, '0')}`;
   const now        = new Date().toISOString();
 
-  // Map flat_number → flat_id + active tenancy
   const { data: flats } = await supabase
     .from('flats')
     .select('id, flat_number')
@@ -556,7 +524,6 @@ export async function calculateFromSheet(
     .eq('status', 'active');
   const tenancyByFlatId = new Map((tenancies ?? []).map((t: any) => [t.flat_id as string, t.id as string]));
 
-  // Determine next version (retire previous draft bills for this cycle)
   const { data: existingBills } = await supabase
     .from('flat_bills')
     .select('version')
@@ -565,7 +532,6 @@ export async function calculateFromSheet(
     .limit(1);
   const nextVersion = ((existingBills?.[0] as any)?.version ?? 0) + 1;
 
-  // Retire any existing current-version bills
   await supabase
     .from('flat_bills')
     .update({ is_current_version: false })
@@ -573,12 +539,11 @@ export async function calculateFromSheet(
     .eq('is_current_version', true)
     .eq('status', 'draft');
 
-  // Build and insert new draft bill rows from sheet outputs
   const rows: Record<string, unknown>[] = [];
   for (const flatNum of flatNums) {
     const flatId    = flatByNumber.get(flatNum);
     const tenancyId = flatId ? tenancyByFlatId.get(flatId) : undefined;
-    if (!flatId || !tenancyId) continue; // no active tenancy for this flat — skip
+    if (!flatId || !tenancyId) continue;
 
     const get = (field: string) => Number(cellMap.get(`flat:${flatNum}:${field}`) ?? 0);
     rows.push({
@@ -613,7 +578,6 @@ export async function calculateFromSheet(
   const { error: insertErr } = await supabase.from('flat_bills').insert(rows);
   if (insertErr) return { data: null, error: insertErr.message };
 
-  // Advance cycle status to 'calculated'
   await supabase
     .from('billing_cycles')
     .update({ status: 'calculated' })
