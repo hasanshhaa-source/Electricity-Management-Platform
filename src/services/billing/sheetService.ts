@@ -133,7 +133,7 @@ export async function autoPopulateSheet(
     supabase.from('flat_meter_assignments').select('meter_id, flat_id, share_percent').is('effective_to', null),
     supabase.from('meter_readings').select('meter_id, reading_value').in('meter_id', [] as string[]).eq('billing_period_year', periodYear).eq('billing_period_month', periodMonth),
     supabase.from('meter_readings').select('meter_id, reading_value').in('meter_id', [] as string[]).eq('billing_period_year', prevYear).eq('billing_period_month', prevMonth),
-    supabase.from('electricity_company_bills').select('id, bill_number, total_amount, total_units').eq('building_id', buildingId).eq('period_year', periodYear).eq('period_month', periodMonth).is('deleted_at', null),
+    supabase.from('electricity_company_bills').select('id, bill_number, total_amount, total_units').eq('building_id', buildingId).eq('period_year', periodYear).eq('period_month', periodMonth),
     supabase.from('flats').select('id, flat_number').eq('building_id', buildingId).is('deleted_at', null),
     supabase.from('tenancies').select('flat_id').eq('status', 'active'),
   ]);
@@ -343,8 +343,7 @@ export async function evaluateCycleSheet(
           .select('bill_number, total_amount, total_units')
           .eq('building_id', cycleRow.building_id)
           .eq('period_year', cycleRow.period_year)
-          .eq('period_month', cycleRow.period_month)
-          .is('deleted_at', null);
+          .eq('period_month', cycleRow.period_month);
         if (bills && bills.length > 0) {
           for (const b of bills) {
             sheet[`bill:${b.bill_number}:cost`]        = lit(Number(b.total_amount));

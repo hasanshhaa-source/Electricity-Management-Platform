@@ -42,16 +42,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
       let { data: bills } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
-        .eq('cycle_id', cycleId)
-        .is('deleted_at', null);
+        .eq('cycle_id', cycleId);
       if (!bills || bills.length === 0) {
         const { data: fallbackBills } = await sb
           .from('electricity_company_bills')
           .select('bill_number, total_amount, total_units')
           .eq('building_id', cycle.building_id)
           .eq('period_year', cycle.period_year)
-          .eq('period_month', cycle.period_month)
-          .is('deleted_at', null);
+          .eq('period_month', cycle.period_month);
         bills = fallbackBills;
       }
       companyBills = (bills ?? []).map((b: any) => ({
@@ -151,8 +149,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         let { data: bills } = await sb
           .from('electricity_company_bills')
           .select('bill_number')
-          .eq('cycle_id', cycleId)
-          .is('deleted_at', null);
+          .eq('cycle_id', cycleId);
         if (!bills || bills.length === 0) {
           const cycleRow = await getCycleById(cycleId);
           if (cycleRow.data) {
@@ -161,8 +158,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
               .select('bill_number')
               .eq('building_id', cycleRow.data.building_id)
               .eq('period_year', cycleRow.data.period_year)
-              .eq('period_month', cycleRow.data.period_month)
-              .is('deleted_at', null);
+              .eq('period_month', cycleRow.data.period_month);
             bills = fb;
           }
         }
