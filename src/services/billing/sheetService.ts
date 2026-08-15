@@ -227,7 +227,7 @@ export async function autoPopulateSheet(
   for (const bill of bills ?? []) {
     const num = bill.bill_number;
     inputCells.push({ cell_name: `bill:${num}:cost`,        formula_text: null, literal_value: Number(bill.total_amount), computed_value: null, is_input: true, display_order: displayOrder++ });
-    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  formula_text: null, computed_value: null, is_input: true, display_order: displayOrder++ });
   }
 
   // ── Fetch building formula template and insert formula cells ─────────────
@@ -338,6 +338,53 @@ export async function evaluateCycleSheet(
   if (fetchErr || !cellRows) return { data: null, error: fetchErr?.message ?? 'Failed to fetch cells' };
 
   const sheet = buildSheet(cellRows);
+
+  // Ensure pool:total_cost / pool:total_consumption always resolve by injecting
+  // live company bill data directly — no DB write needed, bypasses all RLS issues.
+  if (!sheet['pool:total_cost'] || !sheet['pool:total_consumption']) {
+    const { data: sheetRow } = await supabase
+      .from('cycle_sheets')
+      .select('cycle_id')
+      .eq('id', sheetId)
+      .single();
+    if (sheetRow?.cycle_id) {
+      const { data: cycleRow } = await supabase
+        .from('billing_cycles')
+        .select('building_id, period_year, period_month')
+        .eq('id', sheetRow.cycle_id)
+        .single();
+      if (cycleRow) {
+        let { data: bills } = await supabase
+          .from('electricity_company_bills')
+          .select('bill_number, total_amount, total_units')
+          .eq('cycle_id', sheetRow.cycle_id)
+          .is('deleted_at', null);
+        if (!bills || bills.length === 0) {
+          const { data: fb } = await supabase
+            .from('electricity_company_bills')
+            .select('bill_number, total_amount, total_units')
+            .eq('building_id', cycleRow.building_id)
+            .eq('period_year', cycleRow.period_year)
+            .eq('period_month', cycleRow.period_month)
+            .is('deleted_at', null);
+          bills = fb;
+        }
+        if (bills && bills.length > 0) {
+          const totalCost = bills.reduce((s: number, b: any) => s + Number(b.total_amount), 0);
+          const totalUnits = bills.reduce((s: number, b: any) => s + Number(b.total_units), 0);
+          for (const b of bills) {
+            const costKey = `bill:${b.bill_number}:cost`;
+            const consKey = `bill:${b.bill_number}:consumption`;
+            if (!sheet[costKey]) sheet[costKey] = lit(Number(b.total_amount));
+            if (!sheet[consKey]) sheet[consKey] = lit(Number(b.total_units));
+          }
+          if (!sheet['pool:total_cost']) sheet['pool:total_cost'] = lit(totalCost);
+          if (!sheet['pool:total_consumption']) sheet['pool:total_consumption'] = lit(totalUnits);
+        }
+      }
+    }
+  }
+
   const results: Record<string, number> = {};
   const errors:  Record<string, string> = {};
 
