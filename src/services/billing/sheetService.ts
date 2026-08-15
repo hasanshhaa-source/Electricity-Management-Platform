@@ -227,7 +227,7 @@ export async function autoPopulateSheet(
   for (const bill of bills ?? []) {
     const num = bill.bill_number;
     inputCells.push({ cell_name: `bill:${num}:cost`,        formula_text: null, literal_value: Number(bill.total_amount), computed_value: null, is_input: true, display_order: displayOrder++ });
-    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  formula_text: null, computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  computed_value: null, is_input: true, display_order: displayOrder++ });
   }
 
   // ── Fetch building formula template and insert formula cells ─────────────
