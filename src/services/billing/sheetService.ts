@@ -217,17 +217,17 @@ export async function autoPopulateSheet(
     const flatNum = flatNumberById.get(flatId);
     if (!flatNum) continue;
     const isVacant = !activeFlatIds.has(flatId) ? 1 : 0;
-    inputCells.push({ cell_name: `flat:${flatNum}:consumption`, formula_text: null, literal_value: Math.round(data.consumption * 1000) / 1000, computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `flat:${flatNum}:consumption`,      formula_text: null, literal_value: Math.round(data.consumption * 1000) / 1000, computed_value: null, is_input: true, display_order: displayOrder++ });
     if (data.prev !== null) inputCells.push({ cell_name: `flat:${flatNum}:previous_reading`, formula_text: null, literal_value: data.prev, computed_value: null, is_input: true, display_order: displayOrder++ });
     if (data.curr !== null) inputCells.push({ cell_name: `flat:${flatNum}:current_reading`,  formula_text: null, literal_value: data.curr, computed_value: null, is_input: true, display_order: displayOrder++ });
-    inputCells.push({ cell_name: `flat:${flatNum}:vacant`,       formula_text: null, literal_value: isVacant, computed_value: null, is_input: true, display_order: displayOrder++ });
-    inputCells.push({ cell_name: `flat:${flatNum}:meter_error`,  formula_text: null, literal_value: 0,        computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `flat:${flatNum}:vacant`,           formula_text: null, literal_value: isVacant, computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `flat:${flatNum}:meter_error`,      formula_text: null, literal_value: 0,        computed_value: null, is_input: true, display_order: displayOrder++ });
   }
 
   for (const bill of bills ?? []) {
     const num = bill.bill_number;
     inputCells.push({ cell_name: `bill:${num}:cost`,        formula_text: null, literal_value: Number(bill.total_amount), computed_value: null, is_input: true, display_order: displayOrder++ });
-    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  formula_text: null, computed_value: null, is_input: true, display_order: displayOrder++ });
+    inputCells.push({ cell_name: `bill:${num}:consumption`, formula_text: null, literal_value: Number(bill.total_units),  computed_value: null, is_input: true, display_order: displayOrder++ });
   }
 
   // ── Fetch building formula template and insert formula cells ─────────────
@@ -238,19 +238,19 @@ export async function autoPopulateSheet(
     .eq('building_id', buildingId);
 
   const templateCells: Omit<SheetCellRow, 'id'>[] = (templateRows ?? []).map((r: any) => ({
-    cell_name:     r.cell_name,
-    formula_text:  r.formula_text,
-    literal_value: null,
+    cell_name:      r.cell_name,
+    formula_text:   r.formula_text,
+    literal_value:  null,
     computed_value: null,
-    is_input:      false,
-    display_order: displayOrder++,
+    is_input:       false,
+    display_order:  displayOrder++,
   }));
 
   // If no template exists yet, insert minimal placeholder pool formulas
   if (templateCells.length === 0 && (bills ?? []).length > 0) {
     const billNums = (bills ?? []).map((b: any) => b.bill_number);
-    const poolCostFormula   = billNums.map((n: string) => `bill:${n}:cost`).join(' + ');
-    const poolConsuFormula  = billNums.map((n: string) => `bill:${n}:consumption`).join(' + ');
+    const poolCostFormula  = billNums.map((n: string) => `bill:${n}:cost`).join(' + ');
+    const poolConsuFormula = billNums.map((n: string) => `bill:${n}:consumption`).join(' + ');
     templateCells.push(
       { cell_name: 'pool:total_cost',        formula_text: poolCostFormula,  literal_value: null, computed_value: null, is_input: false, display_order: displayOrder++ },
       { cell_name: 'pool:total_consumption', formula_text: poolConsuFormula, literal_value: null, computed_value: null, is_input: false, display_order: displayOrder++ },
@@ -342,7 +342,7 @@ export async function evaluateCycleSheet(
   // Always inject live company bill data as literal cells.
   // This guarantees pool:total_cost / pool:total_consumption always resolve, even when
   // formula cells exist for those names but their bill:N:cost dependencies are missing.
-  // We override any existing formula cells unconditionally — literals win at evaluation time.
+  // Override any existing formula cells unconditionally — literals win at evaluation time.
   {
     const { data: sheetRow } = await supabase
       .from('cycle_sheets')
@@ -384,8 +384,6 @@ export async function evaluateCycleSheet(
   for (const name of Object.keys(sheet)) {
     try {
       const { values } = evaluateSheet({ [name]: sheet[name], ...sheet });
-      // evaluateSheet resolves transitive deps, so results contains more than just `name`
-      // — merge all resolved values (safe: idempotent for already-resolved cells)
       for (const [k, v] of Object.entries(values)) results[k] = v;
     } catch (e: any) {
       errors[name] = e.message ?? 'Unknown error';
