@@ -37,8 +37,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // The frontend uses this to always show bill cells in the reference panel.
     let companyBills: { bill_number: string; total_amount: number; total_units: number }[] = [];
     {
-      const { createAdminClient } = await import('@/lib/supabase/server');
-      const sb = await createAdminClient();
+      const { createClient: mkClient } = await import('@/lib/supabase/server');
+      const sb = await mkClient();
       let { data: bills } = await sb
         .from('electricity_company_bills')
         .select('bill_number, total_amount, total_units')
@@ -59,6 +59,30 @@ export async function GET(_req: NextRequest, { params }: Params) {
         total_amount: Number(b.total_amount),
         total_units:  Number(b.total_units),
       }));
+
+      // Ensure bill input cells and pool formula cells exist in the sheet.
+      // Uses upsertCell (same path as manual cell saves) so it's guaranteed to work.
+      if (companyBills.length > 0) {
+        const billNums = companyBills.map((b) => b.bill_number);
+        const cellsToEnsure: { name: string; literalValue?: number; formulaText?: string }[] = [
+          ...companyBills.flatMap((b) => [
+            { name: `bill:${b.bill_number}:cost`,        literalValue: b.total_amount },
+            { name: `bill:${b.bill_number}:consumption`, literalValue: b.total_units },
+          ]),
+          { name: 'pool:total_cost',        formulaText: billNums.map((n) => `bill:${n}:cost`).join(' + ') },
+          { name: 'pool:total_consumption', formulaText: billNums.map((n) => `bill:${n}:consumption`).join(' + ') },
+        ];
+        // Only create cells that don't already exist
+        const existingCells = sheetResult.data.cells.map((c) => c.cell_name);
+        for (const cell of cellsToEnsure) {
+          if (!existingCells.includes(cell.name)) {
+            await upsertCell(sheetId, cell.name, {
+              formulaText:  cell.formulaText ?? null,
+              literalValue: cell.literalValue ?? null,
+            });
+          }
+        }
+      }
     }
 
     // Evaluate (persists computed_value back to DB)
@@ -108,6 +132,51 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: sheetIdResult.error ?? 'Sheet not found' }, { status: 404 });
     }
     const sheetId = sheetIdResult.data;
+
+    // If the formula references pool:total_cost or pool:total_consumption, ensure those
+    // cells exist before evaluating. Fetch bills and create them if missing.
+    if (formulaText && (formulaText.includes('pool:total_cost') || formulaText.includes('pool:total_consumption'))) {
+      const { createClient: mkSb } = await import('@/lib/supabase/server');
+      const sb = await mkSb();
+      // Check which pool cells are already in the sheet
+      const { data: existingPoolCells } = await sb
+        .from('sheet_cells')
+        .select('cell_name')
+        .eq('sheet_id', sheetId)
+        .in('cell_name', ['pool:total_cost', 'pool:total_consumption']);
+      const existingPoolNames = new Set((existingPoolCells ?? []).map((c: any) => c.cell_name));
+
+      if (!existingPoolNames.has('pool:total_cost') || !existingPoolNames.has('pool:total_consumption')) {
+        // Fetch bills to build pool formulas
+        let { data: bills } = await sb
+          .from('electricity_company_bills')
+          .select('bill_number')
+          .eq('cycle_id', cycleId)
+          .is('deleted_at', null);
+        if (!bills || bills.length === 0) {
+          const cycleRow = await getCycleById(cycleId);
+          if (cycleRow.data) {
+            const { data: fb } = await sb
+              .from('electricity_company_bills')
+              .select('bill_number')
+              .eq('building_id', cycleRow.data.building_id)
+              .eq('period_year', cycleRow.data.period_year)
+              .eq('period_month', cycleRow.data.period_month)
+              .is('deleted_at', null);
+            bills = fb;
+          }
+        }
+        const billNums = (bills ?? []).map((b: any) => String(b.bill_number));
+        if (billNums.length > 0) {
+          if (!existingPoolNames.has('pool:total_cost')) {
+            await upsertCell(sheetId, 'pool:total_cost', { formulaText: billNums.map((n) => `bill:${n}:cost`).join(' + ') });
+          }
+          if (!existingPoolNames.has('pool:total_consumption')) {
+            await upsertCell(sheetId, 'pool:total_consumption', { formulaText: billNums.map((n) => `bill:${n}:consumption`).join(' + ') });
+          }
+        }
+      }
+    }
 
     const upsertResult = await upsertCell(sheetId, cellName, { formulaText, literalValue, displayOrder });
     if (upsertResult.error) return NextResponse.json({ error: upsertResult.error }, { status: 400 });

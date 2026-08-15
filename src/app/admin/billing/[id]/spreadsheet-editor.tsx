@@ -48,9 +48,10 @@ interface SheetData {
 }
 
 interface SpreadsheetEditorProps {
-  cycleId:     string;
-  currency:    string;
-  cycleStatus: CycleStatus;
+  cycleId:              string;
+  currency:             string;
+  cycleStatus:          CycleStatus;
+  initialCompanyBills?: CompanyBill[];
 }
 
 // ─── Cell-name helpers ────────────────────────────────────────────────────────
@@ -86,7 +87,7 @@ function isOutputCell(cellName: string): boolean {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: SpreadsheetEditorProps) {
+export function SpreadsheetEditor({ cycleId, currency, cycleStatus, initialCompanyBills = [] }: SpreadsheetEditorProps) {
   const [data, setData]         = useState<SheetData | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
@@ -384,7 +385,7 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           cell={editing}
           allCells={cells}
           results={data?.results ?? {}}
-          companyBills={data?.companyBills ?? []}
+          companyBills={data?.companyBills?.length ? data.companyBills : initialCompanyBills}
           onClose={() => setEditing(null)}
           onSaved={(patch) => {
             setEditing(null);
@@ -404,7 +405,7 @@ export function SpreadsheetEditor({ cycleId, currency, cycleStatus }: Spreadshee
           prefixHint={addingToGroup}
           allCells={cells}
           results={data?.results ?? {}}
-          companyBills={data?.companyBills ?? []}
+          companyBills={data?.companyBills?.length ? data.companyBills : initialCompanyBills}
           onClose={() => setAddingToGroup(null)}
           onSaved={(patch) => {
             setAddingToGroup(null);

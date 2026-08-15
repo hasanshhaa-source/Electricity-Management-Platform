@@ -205,6 +205,11 @@ export default async function BillingCyclePage({ params }: Props) {
             cycleId={id}
             currency={building?.currency ?? 'SAR'}
             cycleStatus={cycle.status}
+            initialCompanyBills={bills.map((b: any) => ({
+              bill_number:  String(b.bill_number),
+              total_amount: Number(b.total_amount),
+              total_units:  Number(b.total_units),
+            }))}
           />
         </CardContent>
       </Card>
