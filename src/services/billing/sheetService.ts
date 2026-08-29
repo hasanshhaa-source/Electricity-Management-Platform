@@ -47,6 +47,15 @@ function buildSheet(cells: SheetCellRow[]): Sheet {
   return sheet;
 }
 
+/**
+ * Returns the flat number if a cell name is a flat output cell.
+ * Recognises both flat:N:final_bill (canonical) and flat:N:final (alias).
+ */
+function parseFlatOutputCell(cellName: string): string | null {
+  const m = /^flat:([^:]+):(?:final_bill|final)$/.exec(cellName);
+  return m ? m[1] : null;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /** Returns just the sheet id for a cycle — much cheaper than getOrCreateCycleSheet when cells aren't needed. */
@@ -413,10 +422,12 @@ export async function getPublishedOutputs(
     .eq('sheet_id', sheetRow.id);
   if (cellsErr || !cells) return { data: null, error: cellsErr?.message ?? 'Failed to fetch cells' };
 
+  // Collect flat numbers from both flat:N:final_bill and flat:N:final cells.
+  // final_bill takes priority if both exist for the same flat.
   const flatNums = new Set<string>();
   for (const c of cells) {
-    const m = /^flat:([^:]+):final_bill$/.exec(c.cell_name);
-    if (m) flatNums.add(m[1]);
+    const flatNum = parseFlatOutputCell(c.cell_name);
+    if (flatNum) flatNums.add(flatNum);
   }
 
   const { data: flats } = await supabase
@@ -432,7 +443,8 @@ export async function getPublishedOutputs(
     const flatId = flatIdByNumber.get(flatNum);
     if (!flatId) continue;
     const consumption = cellMap.get(`flat:${flatNum}:consumption`);
-    const finalBill   = cellMap.get(`flat:${flatNum}:final_bill`);
+    // Prefer final_bill; fall back to final
+    const finalBill = cellMap.get(`flat:${flatNum}:final_bill`) ?? cellMap.get(`flat:${flatNum}:final`);
     if (consumption === null || consumption === undefined || finalBill === null || finalBill === undefined) continue;
     flatBills[flatId] = { consumption: Number(consumption), finalBill: Number(finalBill) };
   }
@@ -448,9 +460,32 @@ export async function publishSheet(sheetId: string): Promise<ApiResponse<null>> 
     .from('sheet_cells')
     .select('cell_name, computed_value')
     .eq('sheet_id', sheetId)
-    .or('cell_name.like.flat:%:final_bill,cell_name.like.flat:%:consumption');
+    .or('cell_name.like.flat:%:final_bill,cell_name.like.flat:%:final,cell_name.like.flat:%:consumption');
 
-  const missing = (cells ?? []).filter((c) => c.computed_value === null).map((c) => c.cell_name);
+  // For each flat that has a final/final_bill cell, check it has a computed value.
+  // Group by flat number so a flat with both cells only needs one to be non-null.
+  const flatOutputByNum = new Map<string, number | null>();
+  const consumptionMissing: string[] = [];
+
+  for (const c of cells ?? []) {
+    const flatNum = parseFlatOutputCell(c.cell_name);
+    if (flatNum) {
+      // final_bill wins over final if both present
+      if (!flatOutputByNum.has(flatNum) || c.cell_name.endsWith(':final_bill')) {
+        flatOutputByNum.set(flatNum, c.computed_value);
+      }
+      continue;
+    }
+    if (/^flat:[^:]+:consumption$/.test(c.cell_name) && c.computed_value === null) {
+      consumptionMissing.push(c.cell_name);
+    }
+  }
+
+  const outputMissing = [...flatOutputByNum.entries()]
+    .filter(([, v]) => v === null)
+    .map(([flatNum]) => `flat:${flatNum}:final`);
+
+  const missing = [...outputMissing, ...consumptionMissing];
   if (missing.length > 0) return { data: null, error: `Cannot publish: missing computed values for: ${missing.join(', ')}` };
 
   const { error } = await supabase
@@ -488,12 +523,14 @@ export async function calculateFromSheet(
 
   const cellMap = new Map(cells.map((c) => [c.cell_name, c.computed_value ?? c.literal_value]));
 
+  // Collect flat numbers from both flat:N:final_bill and flat:N:final.
+  // final_bill takes priority if both exist for the same flat.
   const flatNums = new Set<string>();
   for (const [name] of cellMap) {
-    const m = /^flat:([^:]+):final_bill$/.exec(name);
-    if (m) flatNums.add(m[1]);
+    const flatNum = parseFlatOutputCell(name);
+    if (flatNum) flatNums.add(flatNum);
   }
-  if (flatNums.size === 0) return { data: null, error: 'No flat:N:final_bill output cells found in sheet. Add them before calculating.' };
+  if (flatNums.size === 0) return { data: null, error: 'No flat:N:final_bill or flat:N:final output cells found in sheet. Add them before calculating.' };
 
   const { data: cycle } = await supabase
     .from('billing_cycles')
@@ -545,6 +582,9 @@ export async function calculateFromSheet(
     if (!flatId || !tenancyId) continue;
 
     const get = (field: string) => Number(cellMap.get(`flat:${flatNum}:${field}`) ?? 0);
+    // Prefer final_bill; fall back to final
+    const totalDue = cellMap.get(`flat:${flatNum}:final_bill`) ?? cellMap.get(`flat:${flatNum}:final`) ?? 0;
+
     rows.push({
       billing_cycle_id:       cycleId,
       flat_id:                flatId,
@@ -561,7 +601,7 @@ export async function calculateFromSheet(
       current_charges:        get('bill'),
       difference_adjustment:  get('adjustment'),
       previous_balance:       get('previous_balance'),
-      total_due:              get('final_bill'),
+      total_due:              Number(totalDue),
       amount_paid:            0,
       status:                 'draft',
       due_date:               dueDate,
