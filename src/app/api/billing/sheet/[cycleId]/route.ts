@@ -6,6 +6,7 @@ import {
   autoPopulateSheet,
   evaluateCycleSheet,
   upsertCell,
+  saveFormulaTemplate,
 } from '@/services/billing/sheetService';
 import { getCycleById } from '@/services/billing/cycleService';
 
@@ -131,6 +132,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
     const sheetId = sheetIdResult.data;
 
+    // Resolve building ID once — needed for template saving below.
+    const cycleResult = await getCycleById(cycleId);
+    const buildingId = cycleResult.data?.building_id;
+
     // If the formula references pool:total_cost or pool:total_consumption, ensure those
     // cells exist before evaluating. Fetch bills and create them if missing.
     if (formulaText && (formulaText.includes('pool:total_cost') || formulaText.includes('pool:total_consumption'))) {
@@ -151,14 +156,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           .select('bill_number')
           .eq('cycle_id', cycleId);
         if (!bills || bills.length === 0) {
-          const cycleRow = await getCycleById(cycleId);
-          if (cycleRow.data) {
+          if (cycleResult.data) {
             const { data: fb } = await sb
               .from('electricity_company_bills')
               .select('bill_number')
-              .eq('building_id', cycleRow.data.building_id)
-              .eq('period_year', cycleRow.data.period_year)
-              .eq('period_month', cycleRow.data.period_month);
+              .eq('building_id', cycleResult.data.building_id)
+              .eq('period_year', cycleResult.data.period_year)
+              .eq('period_month', cycleResult.data.period_month);
             bills = fb;
           }
         }
@@ -176,6 +180,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const upsertResult = await upsertCell(sheetId, cellName, { formulaText, literalValue, displayOrder });
     if (upsertResult.error) return NextResponse.json({ error: upsertResult.error }, { status: 400 });
+
+    // Save formula cells to the building template so future cycles inherit them automatically.
+    // Literal cells (bill amounts, consumption inputs) are excluded — they change every month.
+    if (formulaText && formulaText.trim() !== '' && buildingId) {
+      await saveFormulaTemplate(buildingId, cellName, formulaText.trim());
+    }
 
     const evalResult = await evaluateCycleSheet(sheetId);
     if (evalResult.error || !evalResult.data) {
